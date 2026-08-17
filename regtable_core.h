@@ -67,19 +67,20 @@ typedef struct RegEntry {
      * The core moves data; hooks are where the outside world gets
      * touched. NULL = no hook.
      *
-     * on_write: pre-commit hook, synchronous. Runs after perm and
-     *   range checks, before the value is stored. Apply the value
-     *   to hardware, notify other modules. Return false to veto:
-     *   nothing is stored and the caller gets REG_ERR_REJECTED.
+     * on_write: command check. "Is this command allowed right now?"
+     *   Synchronous; runs after perm and range checks, before the
+     *   value is stored. Return false to refuse: nothing is stored
+     *   and the caller gets REG_ERR_REJECTED.
      *
-     * on_read: refresh hook, synchronous. Runs before the value is
-     *   fetched. Update *ptr from the real source (trigger an ADC
-     *   sample, read a HW register) so the caller sees the current
-     *   value.
+     * on_read: computed value. "Where does this value come from?"
+     *   Synchronous; runs before the value is fetched. Fill *ptr
+     *   from the real source (sample the ADC, convert to volts) so
+     *   the caller sees engineering units, not the hardware.
      *
-     * on_change: post-commit hook, deferred. Runs from reg_poll(),
-     *   in the poller's context, for every entry whose dirty bit
-     *   is set. Publish over MQTT, raise an alarm, drive an output.
+     * on_change: telemetry. "Who needs to know it changed?"
+     *   Deferred; runs from reg_poll(), in the poller's context, for
+     *   every entry whose dirty bit is set. The value is already
+     *   stored: publish it, log it, refresh a display.
      */
     bool      (*on_write)(const struct RegEntry *entry, uint32_t raw);
     void      (*on_read)(const struct RegEntry *entry);

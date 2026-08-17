@@ -172,13 +172,11 @@ desc:   Sampling interval in ms
 
 ## Design principles
 
-**Hardware describes itself, not pretends to be uniform.** HAL hides differences behind a common API; when the differences leak through, you're back to reading datasheets. regtable preserves differences as structured metadata (type, permission, range, side-effect callbacks). Consumers don't need `if ADC ... else if GPIO ...`, they call `reg_get_raw()` and the entry carries its own access contract.
+**Each register carries its own rules.** Type, permission, range, and callbacks live in the `RegEntry` struct. Any code that reads or writes a register gets the same checks automatically. You don't write `if ADC ... else if GPIO ...` in every adapter; you call `reg_get_raw()` and the entry handles the rest.
 
-**SVD is silicon truth, YAML is product policy.** The same STM32 chip makes a temperature logger and a motor controller. SVD describes what the chip *has*; YAML describes what your product *exposes*. regtable merges both into one runtime namespace.
+**Define once, access from anywhere.** Without regtable, your CLI code knows how to read the temperature, your Modbus code knows how to read the temperature, your documentation describes how to read the temperature. With regtable, only the register table knows. CLI, Modbus, MQTT, MCP, and docs all read the same table.
 
-**Complexity is described once, projected many times.** Without regtable, CLI code knows hardware details, Modbus code knows hardware details, documentation knows hardware details, test tools know hardware details. With regtable, only `RegEntry` knows. CLI, Modbus, MQTT, MCP, and documentation are projections of the same table.
-
-**Built on what already exists.** regtable reads what ARM already defined (CMSIS-SVD) and what industry already uses (Modbus). Silicon vendors ship SVD today; SCADA masters speak Modbus today. regtable plugs into both as they are.
+**Use what the industry already ships.** ARM chips come with machine-readable register descriptions (CMSIS-SVD). SCADA systems already speak Modbus. regtable plugs into both as they are.
 
 ## Concurrency
 
@@ -206,15 +204,19 @@ regtable leaves this to you because every platform locks differently. The simple
 
 ## Hooks
 
-Three side-effect points on the access path. The core moves data; hooks are where the outside world gets touched.
+Three side-effect points on the access path. The core moves data; hooks are where the outside world gets touched. Each one answers a different question:
 
-| Hook | When | Context | Use |
+| Hook | Question it answers | When | Context |
 | --- | --- | --- | --- |
-| `on_write` | after perm/range check, before store | synchronous | apply to hardware; return `false` to veto |
-| `on_read` | before fetch | synchronous | refresh `*ptr` from the real source |
-| `on_change` | value changed; runs at next `reg_poll` | deferred | publish, alarm, drive an output |
+| `on_write` | Is this command allowed right now? | after perm/range check, before store | synchronous |
+| `on_read` | Where does this value come from? | before fetch | synchronous |
+| `on_change` | Who needs to know it changed? | value changed; runs at next `reg_poll` | deferred |
 
-`on_change` is deferred on purpose: a write only sets a dirty bit, and `reg_poll()` runs the hooks from the main loop in table order. Writes from any adapter stay cheap and reentrancy-safe, hook chains have constant stack depth, and the order of reactions is deterministic. When your own C code changes a variable directly, `reg_mark_dirty()` puts it in the same queue.
+**`on_write` is a command check.** Someone wrote `pump = 1`; that's a command. The hook decides whether it's allowed right now (interlock open? state machine in the right state?) and returns `false` to refuse. Nothing is stored on refusal and the caller gets `ERR: rejected`.
+
+**`on_read` is a computed value.** From the outside, `voltage` looks like a plain float register. Inside, the hook samples the ADC, converts counts to volts, and writes the result into `*ptr` just before it's read. The caller gets engineering units and never sees the ADC.
+
+**`on_change` is telemetry.** The value changed and something outside needs to hear about it: publish it over MQTT, log it, refresh a display, light an LED that follows a switch. It is deferred: the write only sets a dirty bit, and `reg_poll()` runs the hooks later from the main loop in table order. By the time it runs the value is already stored, so it can report but not refuse. When your own C code changes a variable directly, `reg_mark_dirty()` puts it in the same queue.
 
 ## Design decisions (settled)
 
