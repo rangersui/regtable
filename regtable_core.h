@@ -4,85 +4,138 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* ── type enum ─────────────────────────────────────────── */
+/* -- configuration --------------------------------------- */
+#ifndef REGTABLE_MAX_ENTRIES
+#define REGTABLE_MAX_ENTRIES 64     /* sizes the dirty bitmap */
+#endif
+
+/* -- type enum ------------------------------------------- */
 typedef enum RegType {
     REG_U8,
     REG_U16,
     REG_U32,
+    REG_I8,
+    REG_I16,
+    REG_I32,
     REG_FLOAT,
     REG_BOOL
 } RegType;
 
-/* ── permission enum ───────────────────────────────────── */
+/* -- permission enum ------------------------------------- */
 typedef enum RegPerm {
     REG_RO,
     REG_RW
 } RegPerm;
 
-/* ── result codes ──────────────────────────────────────── */
+/* -- result codes ---------------------------------------- */
 typedef enum RegResult {
     REG_OK,
     REG_ERR_NOT_FOUND,
     REG_ERR_READONLY,
     REG_ERR_TYPE,
     REG_ERR_RANGE,
-    REG_ERR_REJECTED
+    REG_ERR_REJECTED,
+    REG_ERR_TABLE           /* table too large or malformed */
 } RegResult;
 
-/* ── register entry ────────────────────────────────────── */
+/* -- range limit ----------------------------------------- */
+/*  Read through the member that matches the entry's type:
+ *  .u for U8/U16/U32, .i for I8/I16/I32, .f for FLOAT.
+ *  min and max both all-zero bits = no range. */
+typedef union RegLimit {
+    int32_t  i;
+    uint32_t u;
+    float    f;
+} RegLimit;
+
+/* -- register entry -------------------------------------- */
 /*  "raw" convention (on_write, reg_set_raw, reg_get_raw):
- *  U8/U16/U32/BOOL — the numeric value, zero-extended to 32 bits.
- *  FLOAT           — the IEEE-754 bit pattern (memcpy).
- *
- *  min/max are int32_t: U32 ranges reach INT32_MAX, FLOAT ranges
- *  are whole numbers.
+ *  U8/U16/U32/BOOL: the value, zero-extended to 32 bits.
+ *  I8/I16/I32:      the value, sign-extended to 32 bits.
+ *  FLOAT:           the IEEE-754 bit pattern (memcpy).
  */
 typedef struct RegEntry {
     const char *name;           /* CLI / MCP identifier          */
-    void       *ptr;            /* → user variable or HW reg     */
+    void       *ptr;            /* -> user variable or HW reg     */
     RegType     type;
     RegPerm     perm;
     uint16_t    modbus_addr;    /* Modbus holding register addr  */
-    int32_t     min;            /* range min  (min==max==0: no range) */
-    int32_t     max;            /* range max                     */
+    RegLimit    min;            /* .min.u / .min.i / .min.f      */
+    RegLimit    max;
 
-    /* Hooks — side-effect points on the access path.
+    /* Hooks: side-effect points on the access path.
      * The core moves data; hooks are where the outside world gets
      * touched. NULL = no hook.
      *
-     * on_write: pre-commit hook. Runs after perm/range checks,
-     *   before the value is stored. Apply the value to hardware,
-     *   notify other modules. Return false to veto: nothing is
-     *   stored and the caller gets REG_ERR_REJECTED.
+     * on_write: pre-commit hook, synchronous. Runs after perm and
+     *   range checks, before the value is stored. Apply the value
+     *   to hardware, notify other modules. Return false to veto:
+     *   nothing is stored and the caller gets REG_ERR_REJECTED.
      *
-     * on_read: refresh hook. Runs before the value is fetched.
-     *   Update *ptr from the real source (trigger an ADC sample,
-     *   read a HW register) so the caller sees the current value.
+     * on_read: refresh hook, synchronous. Runs before the value is
+     *   fetched. Update *ptr from the real source (trigger an ADC
+     *   sample, read a HW register) so the caller sees the current
+     *   value.
+     *
+     * on_change: post-commit hook, deferred. Runs from reg_poll(),
+     *   in the poller's context, for every entry whose dirty bit
+     *   is set. Publish over MQTT, raise an alarm, drive an output.
      */
     bool      (*on_write)(const struct RegEntry *entry, uint32_t raw);
     void      (*on_read)(const struct RegEntry *entry);
+    void      (*on_change)(const struct RegEntry *entry);
 
     const char *description;    /* human / AI readable           */
 } RegEntry;
 
-/* ── transport abstraction ─────────────────────────────── */
+/* -- table handle ---------------------------------------- */
+/*  Runtime side of a register table: the entries (in flash) plus
+ *  the dirty bitmap (in RAM) that on_change is driven from. */
+typedef struct RegTable {
+    const RegEntry *entries;    /* NULL-terminated               */
+    uint16_t        count;      /* set by reg_table_init          */
+    uint32_t        dirty[(REGTABLE_MAX_ENTRIES + 31) / 32];
+} RegTable;
+
+/* -- transport abstraction ------------------------------- */
 typedef struct RegTransport {
     int  (*read)(uint8_t *buf, uint16_t len, uint32_t timeout_ms);
     int  (*write)(const uint8_t *buf, uint16_t len);
 } RegTransport;
 
-/* ── core API ──────────────────────────────────────────── */
+/* -- core API -------------------------------------------- */
+
+/*  Bind a table handle to a NULL-terminated entry array.
+ *  Counts entries and clears the dirty bitmap.
+ *  REG_ERR_TABLE if there are more than REGTABLE_MAX_ENTRIES. */
+RegResult reg_table_init(RegTable *t, const RegEntry *entries);
 
 /*  Find entry by name. Returns NULL if not found. */
-const RegEntry *reg_find(const RegEntry *table, const char *name);
+const RegEntry *reg_find(const RegTable *t, const char *name);
 
 /*  Typed core path. Every protocol adapter goes through here;
  *  perm, range, and on_write all happen in reg_set_raw.
  *
- *  reg_set_raw: validate and commit a raw value.
+ *  reg_set_raw: validate and commit a raw value. If the value
+ *    changed, the entry is marked dirty in t (t may be NULL to
+ *    skip change tracking).
  *  reg_get_raw: run on_read, fetch the current value as raw. */
-RegResult reg_set_raw(const RegEntry *entry, uint32_t raw);
+RegResult reg_set_raw(RegTable *t, const RegEntry *entry, uint32_t raw);
 RegResult reg_get_raw(const RegEntry *entry, uint32_t *raw_out);
+
+/*  Change tracking: one dirty bitmap, two ways in, one way out.
+ *
+ *  In:  reg_set_raw sets the bit when a write (from any adapter)
+ *       changes the value. reg_mark_dirty sets it when your own
+ *       C code changed *ptr directly (temp = read_sensor()).
+ *  Out: reg_poll walks the bitmap in table order, clears each bit,
+ *       runs that entry's on_change. It does not know or care who
+ *       set the bit.
+ *
+ *  Call reg_poll from your main loop, at whatever cadence you
+ *  choose. Returns the number of hooks run. */
+void     reg_mark_dirty(RegTable *t, const RegEntry *entry);
+uint16_t reg_poll(RegTable *t);
 
 /*  String layer over the raw path (what the CLI uses).
  *  reg_get_str: format the current value into buf.
@@ -90,7 +143,7 @@ RegResult reg_get_raw(const RegEntry *entry, uint32_t *raw_out);
 int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size);
 
 /*  reg_set_str: parse value_str per entry->type, then reg_set_raw. */
-RegResult reg_set_str(const RegEntry *entry, const char *value_str);
+RegResult reg_set_str(RegTable *t, const RegEntry *entry, const char *value_str);
 
 /*  Human-readable result code. */
 const char *reg_result_str(RegResult r);

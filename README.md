@@ -6,23 +6,19 @@ Expose any Cortex-M MCU's state the way a PLC exposes its registers: one registe
 
 You define a table of named registers (your variables + selected hardware peripherals). The library exposes them through:
 
-- **Serial CLI** — `get temp`, `set led true`, `info interval`, `list`
-- **Modbus RTU** — any SCADA / HMI / PLC master can read/write (planned)
-- **MQTT** — publish state, subscribe to commands (planned)
-- **MCP** — AI agents operate your device (planned)
-- **Web UI** — browser connects via Web Serial / Web Bluetooth (planned)
+- **Serial CLI** `get temp`, `set led true`, `info interval`, `list`
+- **Modbus RTU** any SCADA / HMI / PLC master can read/write (planned)
+- **MQTT** publish state, subscribe to commands (planned)
+- **MCP** AI agents operate your device (planned)
+- **Web UI** browser connects via Web Serial / Web Bluetooth (planned)
 
-All interfaces share one typed access path: `reg_set_raw()` / `reg_get_raw()`. Type checking, permission enforcement, range validation, and write callbacks happen once in the core — protocol adapters only translate wire formats.
+All interfaces share one typed access path: `reg_set_raw()` / `reg_get_raw()`. Type checking, permission enforcement, range validation, and write callbacks happen once in the core. Protocol adapters only translate wire formats.
 
 ## Scope
 
 regtable exposes state. It does not execute logic.
 
-Your control logic lives in your C code — regtable only makes
-your variables readable and writable from outside. No rule engine,
-no programming language, no function block library. If your
-`on_write` hook rejects a value or your `on_change` fires an
-alarm, that's your C function, not regtable's.
+Your control logic lives in your C code. regtable only makes your variables readable and writable from outside. No rule engine, no programming language, no function block library. If your `on_write` hook rejects a value or your `on_change` fires an alarm, that's your C function, not regtable's.
 
 ## The idea
 
@@ -80,11 +76,14 @@ static uint16_t interval = 1000;
 static uint8_t  led      = 0;
 
 // 2. Declare the register table
+static void led_changed(const RegEntry *e) { HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, led); }
+
 static const RegEntry registry[] = {
     { .name = "temp",     .ptr = &temp,     .type = REG_FLOAT, .perm = REG_RO },
     { .name = "interval", .ptr = &interval, .type = REG_U16,   .perm = REG_RW,
-      .min = 100, .max = 60000 },
-    { .name = "led",      .ptr = &led,      .type = REG_BOOL,  .perm = REG_RW },
+      .min.u = 100, .max.u = 60000 },
+    { .name = "led",      .ptr = &led,      .type = REG_BOOL,  .perm = REG_RW,
+      .on_change = led_changed },
     { .name = NULL }
 };
 
@@ -101,16 +100,23 @@ int main(void) {
     HAL_Init();
     // ... clock, GPIO, UART init ...
 
+    RegTable table;
+    reg_table_init(&table, registry);
+
     RegTransport tx = { .read = my_read, .write = my_write };
     RegCli cli;
-    regcli_init(&cli, registry, tx);
+    regcli_init(&cli, &table, tx);
 
     while (1) {
         uint8_t byte;
         if (HAL_UART_Receive(&huart2, &byte, 1, 10) == HAL_OK) {
             regcli_feed(&cli, byte);
         }
-        temp = read_sensor();  // your business logic
+
+        temp = read_sensor();                       // your business logic
+        reg_mark_dirty(&table, &registry[0]);       // tell the table it moved
+
+        reg_poll(&table);                           // deferred on_change hooks run here
     }
 }
 ```
@@ -146,25 +152,27 @@ desc:   Sampling interval in ms
 
 ## What the library handles
 
-| Feature                                            | Status                   |
-| -------------------------------------------------- | ------------------------ |
-| Register table with name, type, permission, range  | ✅ Done                  |
-| Typed core API (`reg_set_raw` / `reg_get_raw`) — single validation path for all adapters | ✅ Done |
-| Serial CLI (get / set / info / list / help)        | ✅ Done                  |
-| Transport abstraction for byte-stream adapters     | ✅ Done                  |
-| Write callbacks (validation, side effects)         | ✅ Done                  |
-| Read callbacks (trigger ADC, refresh cached value) | ✅ Done                  |
-| Hardware register access (GPIO ODR, ADC DR, etc.)  | ✅ Supported via pointer |
-| Modbus RTU slave                                   | 🔲 Planned               |
-| Python codegen from YAML + SVD                     | 🔲 Planned               |
-| MQTT state publish / command subscribe             | 🔲 Planned               |
-| MCP server generation from YAML                    | 🔲 Planned               |
-| Web UI via Web Serial / Web Bluetooth              | 🔲 Planned               |
-| JSON output mode (`list --json`)                   | 🔲 Planned               |
+| Feature | Status |
+| --- | --- |
+| Register table with name, type, permission, range | ✅ Done |
+| Types: U8/U16/U32, I8/I16/I32, FLOAT, BOOL | ✅ Done |
+| Typed core API (`reg_set_raw` / `reg_get_raw`), single validation path for all adapters | ✅ Done |
+| Serial CLI (get / set / info / list / help) | ✅ Done |
+| Transport abstraction for byte-stream adapters | ✅ Done |
+| `on_write` hook (sync guard, can veto) | ✅ Done |
+| `on_read` hook (refresh before fetch) | ✅ Done |
+| `on_change` hook (deferred, via dirty bitmap + `reg_poll`) | ✅ Done |
+| Hardware register access (GPIO ODR, ADC DR, etc.) | ✅ Supported via pointer |
+| Modbus RTU slave | 🔲 Planned |
+| Python codegen from YAML + SVD | 🔲 Planned |
+| MQTT state publish / command subscribe | 🔲 Planned |
+| MCP server generation from YAML | 🔲 Planned |
+| Web UI via Web Serial / Web Bluetooth | 🔲 Planned |
+| JSON output mode (`list --json`) | 🔲 Planned |
 
 ## Design principles
 
-**Hardware describes itself, not pretends to be uniform.** HAL hides differences behind a common API; when the differences leak through, you're back to reading datasheets. regtable preserves differences as structured metadata (type, permission, range, side-effect callbacks). Consumers don't need `if ADC ... else if GPIO ...` — they call `reg_get_raw()` and the entry carries its own access contract.
+**Hardware describes itself, not pretends to be uniform.** HAL hides differences behind a common API; when the differences leak through, you're back to reading datasheets. regtable preserves differences as structured metadata (type, permission, range, side-effect callbacks). Consumers don't need `if ADC ... else if GPIO ...`, they call `reg_get_raw()` and the entry carries its own access contract.
 
 **SVD is silicon truth, YAML is product policy.** The same STM32 chip makes a temperature logger and a motor controller. SVD describes what the chip *has*; YAML describes what your product *exposes*. regtable merges both into one runtime namespace.
 
@@ -172,24 +180,56 @@ desc:   Sampling interval in ms
 
 **Built on what already exists.** regtable reads what ARM already defined (CMSIS-SVD) and what industry already uses (Modbus). Silicon vendors ship SVD today; SCADA masters speak Modbus today. regtable plugs into both as they are.
 
-## Concurrency contract
+## Concurrency
 
-All protocol adapters and all register variables are accessed from a single execution context — the bare-metal main loop, or one RTOS task. Locking is the caller's job: if an ISR or another task writes a register variable, wrap it in your own critical section. Aligned 32-bit loads and stores are atomic on Cortex-M; read-modify-write sequences and multi-register values (float over Modbus) are not.
+regtable takes no locks. If everything (adapters, `reg_poll`, and the code that touches your register variables) runs in one main loop or one RTOS task, you're done; skip this section.
 
-## Open design decisions (pre-1.0)
+If an ISR or another task also writes a register variable, there is a race. `reg_set_raw` does three steps:
 
-Decisions that change `RegEntry` or the raw convention, so they must land before the struct is frozen:
+```
+1. old = *ptr          read the current value
+2. *ptr = raw          store the new one
+3. mark dirty          set the bit in the bitmap
+```
 
-- **Change notification.** MQTT publish-on-change needs a dirty flag or `on_change` hook; today the table is poll-only.
-- **Signed types.** `I8` / `I16` / `I32` are not in the enum yet; adding them extends the raw convention (sign-extension rules).
-- **Range metadata.** `min` / `max` are `int32_t` — U32 ranges cap at `INT32_MAX`, and FLOAT ranges are integer-valued. A typed union would fix both at +4 bytes/entry.
-- **Modbus float word order.** A float spans two holding registers; the ABCD vs CDAB convention must be declared (per-table or per-entry).
+If the main loop is between step 1 and step 2 when an interrupt writes the same variable, step 2 overwrites the interrupt's value, it's lost. The dirty bitmap has the same problem on its own: `reg_mark_dirty` does `bits |= x` and `reg_poll` does `bits &= ~x`, both read-modify-write, so an ISR calling `reg_mark_dirty` while the main loop is inside `reg_poll` can lose a bit.
+
+The fix is a critical section around the access:
+
+```c
+disable_irq();                      // Cortex-M: __disable_irq()
+reg_set_raw(&table, entry, raw);    // FreeRTOS: taskENTER_CRITICAL()
+enable_irq();                       // Arduino:  noInterrupts()
+```
+
+regtable leaves this to you because every platform locks differently. The simplest pattern is to keep the ISR out of the table entirely: have it set its own flag or write its own variable, and let the main loop call `reg_mark_dirty` when it picks that up.
+
+## Hooks
+
+Three side-effect points on the access path. The core moves data; hooks are where the outside world gets touched.
+
+| Hook | When | Context | Use |
+| --- | --- | --- | --- |
+| `on_write` | after perm/range check, before store | synchronous | apply to hardware; return `false` to veto |
+| `on_read` | before fetch | synchronous | refresh `*ptr` from the real source |
+| `on_change` | value changed; runs at next `reg_poll` | deferred | publish, alarm, drive an output |
+
+`on_change` is deferred on purpose: a write only sets a dirty bit, and `reg_poll()` runs the hooks from the main loop in table order. Writes from any adapter stay cheap and reentrancy-safe, hook chains have constant stack depth, and the order of reactions is deterministic. When your own C code changes a variable directly, `reg_mark_dirty()` puts it in the same queue.
+
+## Design decisions (settled)
+
+- **Signed types.** `I8` / `I16` / `I32` are in the enum; raw convention is sign-extension to 32 bits.
+- **Range metadata.** `min` / `max` are a `RegLimit` union (`.u` / `.i` / `.f`), read through the member matching the entry's type. Full U32 range and fractional FLOAT ranges are expressible; entry size unchanged.
+- **Change notification.** Dirty bitmap in the `RegTable` handle (RAM), entries stay `const` in flash. `REGTABLE_MAX_ENTRIES` (default 64) sizes the bitmap.
+- **Modbus float word order.** A device speaks one convention, so ABCD/CDAB is a Modbus adapter parameter, not a per-entry field.
+
+`RegEntry` is considered stable from here; adapters and codegen can build on it.
 
 ## Resource budget
 
-- Flash: ~3–5 KB runtime library. Note: FLOAT registers use `%f` formatting, which on newlib-nano requires `-u _printf_float` (adds several KB); a minimal built-in float formatter is a planned alternative.
-- Register table: ~40 bytes per entry, in flash (`const`).
-- RAM: one `RegCli` context (~140 bytes with the default 128-byte line buffer).
+- Flash: ~3-5 KB runtime library. Note: FLOAT registers use `%f` formatting, which on newlib-nano requires `-u _printf_float` (adds several KB); a minimal built-in float formatter is a planned alternative.
+- Register table: ~44 bytes per entry, in flash (`const`).
+- RAM: one `RegTable` handle (~16 bytes at the default 64-entry bitmap) plus one `RegCli` context (~140 bytes with the default 128-byte line buffer).
 - Stack: ~200 bytes during command processing.
 - Dynamic allocation: zero.
 - Dependencies: C99 standard library only.
@@ -199,8 +239,8 @@ Runs on Cortex-M0 (64 KB flash / 8 KB RAM) and up.
 ## Files
 
 ```
-regtable_core.h     Register entry struct, type/perm enums, raw convention, core API
-regtable_core.c     Lookup, typed raw get/set (validation), string parse layer
+regtable_core.h     Register entry struct, table handle, type/perm enums, raw convention, core API
+regtable_core.c     Lookup, typed raw get/set (validation), dirty tracking + reg_poll, string layer
 regtable_cli.h      CLI context struct
 regtable_cli.c      Non-blocking byte-fed CLI parser (get/set/info/list/help)
 test_desktop.c      Desktop test harness (gcc)
@@ -208,7 +248,7 @@ test_desktop.c      Desktop test harness (gcc)
 
 ## Chip agnostic
 
-The library is pure C99. Platform-specific code lives entirely in two user-provided function pointers (`read` and `write`). Switching chips means changing those two function bodies — nothing else.
+The library is pure C99. Platform-specific code lives entirely in two user-provided function pointers (`read` and `write`). Switching chips means changing those two function bodies, nothing else.
 
 Tested / intended targets:
 

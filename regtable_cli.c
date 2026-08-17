@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-/* ── output helper ─────────────────────────────────────── */
+/* -- output helper --------------------------------------- */
 
 static void cli_puts(RegCli *cli, const char *s)
 {
@@ -22,7 +22,7 @@ static void cli_print(RegCli *cli, const char *fmt, ...)
     }
 }
 
-/* ── tokeniser — splits the line in place, argv points into it ── */
+/* -- tokeniser: splits the line in place, argv points into it -- */
 
 static int cli_split(char *line, char **argv, int max_args)
 {
@@ -43,7 +43,7 @@ static int cli_split(char *line, char **argv, int max_args)
     return argc;
 }
 
-/* ── commands ──────────────────────────────────────────── */
+/* -- commands -------------------------------------------- */
 
 static void cmd_list(RegCli *cli)
 {
@@ -52,7 +52,7 @@ static void cmd_list(RegCli *cli)
     cli_puts(cli, "NAME            TYPE   PERM  VALUE\r\n");
     cli_puts(cli, "--------------------------------------------\r\n");
 
-    for (const RegEntry *e = cli->table; e->name != NULL; e++) {
+    for (const RegEntry *e = cli->table->entries; e->name != NULL; e++) {
         reg_get_str(e, vbuf, sizeof(vbuf));
         cli_print(cli, "%-16s%-7s%-6s%s\r\n",
                   e->name,
@@ -84,7 +84,7 @@ static void cmd_set(RegCli *cli, const char *name, const char *value)
         cli_puts(cli, "\r\n");
         return;
     }
-    RegResult r = reg_set_str(e, value);
+    RegResult r = reg_set_str(cli->table, e, value);
     cli_puts(cli, reg_result_str(r));
     cli_puts(cli, "\r\n");
 }
@@ -105,8 +105,19 @@ static void cmd_info(RegCli *cli, const char *name)
     cli_print(cli, "type:   %s\r\n", reg_type_str(e->type));
     cli_print(cli, "perm:   %s\r\n", e->perm == REG_RO ? "RO" : "RW");
     cli_print(cli, "value:  %s\r\n", vbuf);
-    if (!(e->min == 0 && e->max == 0)) {
-        cli_print(cli, "range:  %ld..%ld\r\n", (long)e->min, (long)e->max);
+    if (!(e->min.u == 0 && e->max.u == 0)) {
+        switch (e->type) {
+        case REG_I8: case REG_I16: case REG_I32:
+            cli_print(cli, "range:  %ld..%ld\r\n", (long)e->min.i, (long)e->max.i);
+            break;
+        case REG_FLOAT:
+            cli_print(cli, "range:  %.2f..%.2f\r\n", (double)e->min.f, (double)e->max.f);
+            break;
+        default:
+            cli_print(cli, "range:  %lu..%lu\r\n",
+                      (unsigned long)e->min.u, (unsigned long)e->max.u);
+            break;
+        }
     }
     cli_print(cli, "modbus: 0x%04X\r\n", e->modbus_addr);
     if (e->description) {
@@ -124,7 +135,7 @@ static void cmd_help(RegCli *cli)
     cli_puts(cli, "  help                show this message\r\n");
 }
 
-/* ── line processor ────────────────────────────────────── */
+/* -- line processor -------------------------------------- */
 
 static void cli_process(RegCli *cli, char *line)
 {
@@ -150,9 +161,9 @@ static void cli_process(RegCli *cli, char *line)
     }
 }
 
-/* ── public API ────────────────────────────────────────── */
+/* -- public API ------------------------------------------ */
 
-void regcli_init(RegCli *cli, const RegEntry *table, RegTransport tx)
+void regcli_init(RegCli *cli, RegTable *table, RegTransport tx)
 {
     cli->table = table;
     cli->tx    = tx;
@@ -191,7 +202,7 @@ void regcli_feed(RegCli *cli, uint8_t byte)
         return;
     }
 
-    /* normal char — beyond the buffer, keystrokes are dropped */
+    /* normal char; beyond the buffer, keystrokes are dropped */
     if (cli->pos < REGTABLE_CLI_BUF_SIZE - 1) {
         cli->buf[cli->pos++] = (char)byte;
     }

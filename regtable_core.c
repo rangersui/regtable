@@ -5,7 +5,7 @@
 #include <errno.h>
 #include <limits.h>
 
-/* ── helpers ───────────────────────────────────────────── */
+/* -- helpers --------------------------------------------- */
 
 const char *reg_type_str(RegType t)
 {
@@ -13,6 +13,9 @@ const char *reg_type_str(RegType t)
     case REG_U8:    return "U8";
     case REG_U16:   return "U16";
     case REG_U32:   return "U32";
+    case REG_I8:    return "I8";
+    case REG_I16:   return "I16";
+    case REG_I32:   return "I32";
     case REG_FLOAT: return "FLOAT";
     case REG_BOOL:  return "BOOL";
     }
@@ -28,20 +31,74 @@ const char *reg_result_str(RegResult r)
     case REG_ERR_TYPE:      return "ERR: invalid value";
     case REG_ERR_RANGE:     return "ERR: out of range";
     case REG_ERR_REJECTED:  return "ERR: rejected";
+    case REG_ERR_TABLE:     return "ERR: bad table";
     }
     return "ERR: unknown";
 }
 
 static bool has_range(const RegEntry *entry)
 {
-    return !(entry->min == 0 && entry->max == 0);
+    return !(entry->min.u == 0 && entry->max.u == 0);
 }
 
-/* ── find ──────────────────────────────────────────────── */
-
-const RegEntry *reg_find(const RegEntry *table, const char *name)
+static bool is_signed(RegType t)
 {
-    for (const RegEntry *e = table; e->name != NULL; e++) {
+    return t == REG_I8 || t == REG_I16 || t == REG_I32;
+}
+
+/* Current value of *ptr as raw, no hooks. */
+static uint32_t load_raw(const RegEntry *entry)
+{
+    uint32_t raw = 0;
+    switch (entry->type) {
+    case REG_U8:   raw = *(uint8_t  *)entry->ptr; break;
+    case REG_U16:  raw = *(uint16_t *)entry->ptr; break;
+    case REG_U32:  raw = *(uint32_t *)entry->ptr; break;
+    case REG_I8:   raw = (uint32_t)(int32_t)*(int8_t  *)entry->ptr; break;
+    case REG_I16:  raw = (uint32_t)(int32_t)*(int16_t *)entry->ptr; break;
+    case REG_I32:  raw = (uint32_t)*(int32_t *)entry->ptr; break;
+    case REG_BOOL: raw = *(uint8_t  *)entry->ptr ? 1 : 0; break;
+    case REG_FLOAT: memcpy(&raw, entry->ptr, 4); break;
+    }
+    return raw;
+}
+
+static void store_raw(const RegEntry *entry, uint32_t raw)
+{
+    switch (entry->type) {
+    case REG_U8:   *(uint8_t  *)entry->ptr = (uint8_t)raw;   break;
+    case REG_U16:  *(uint16_t *)entry->ptr = (uint16_t)raw;  break;
+    case REG_U32:  *(uint32_t *)entry->ptr = raw;            break;
+    case REG_I8:   *(int8_t   *)entry->ptr = (int8_t)(int32_t)raw;  break;
+    case REG_I16:  *(int16_t  *)entry->ptr = (int16_t)(int32_t)raw; break;
+    case REG_I32:  *(int32_t  *)entry->ptr = (int32_t)raw;   break;
+    case REG_BOOL: *(uint8_t  *)entry->ptr = (uint8_t)raw;   break;
+    case REG_FLOAT: memcpy(entry->ptr, &raw, 4);             break;
+    }
+}
+
+/* -- table ----------------------------------------------- */
+
+RegResult reg_table_init(RegTable *t, const RegEntry *entries)
+{
+    uint16_t n = 0;
+    for (const RegEntry *e = entries; e->name != NULL; e++) {
+        n++;
+        if (n > REGTABLE_MAX_ENTRIES) {
+            t->entries = NULL;
+            t->count   = 0;
+            return REG_ERR_TABLE;
+        }
+    }
+    t->entries = entries;
+    t->count   = n;
+    memset(t->dirty, 0, sizeof(t->dirty));
+    return REG_OK;
+}
+
+const RegEntry *reg_find(const RegTable *t, const char *name)
+{
+    for (const RegEntry *e = t->entries; e->name != NULL; e++) {
         if (strcmp(e->name, name) == 0) {
             return e;
         }
@@ -49,33 +106,40 @@ const RegEntry *reg_find(const RegEntry *table, const char *name)
     return NULL;
 }
 
-/* ── get (read value → formatted string) ───────────────── */
+/* -- change tracking ------------------------------------- */
 
-int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size)
+void reg_mark_dirty(RegTable *t, const RegEntry *entry)
 {
-    if (entry->on_read) {
-        entry->on_read(entry);
-    }
+    if (!t || !t->entries) return;
+    if (entry < t->entries || entry >= t->entries + t->count) return;
 
-    switch (entry->type) {
-    case REG_U8:
-        return snprintf(buf, buf_size, "%u", (unsigned)*(uint8_t *)entry->ptr);
-    case REG_U16:
-        return snprintf(buf, buf_size, "%u", (unsigned)*(uint16_t *)entry->ptr);
-    case REG_U32:
-        return snprintf(buf, buf_size, "%lu", (unsigned long)*(uint32_t *)entry->ptr);
-    case REG_FLOAT:
-        return snprintf(buf, buf_size, "%.2f", (double)*(float *)entry->ptr);
-    case REG_BOOL:
-        return snprintf(buf, buf_size, "%s",
-                        *(uint8_t *)entry->ptr ? "true" : "false");
-    }
-    return -1;
+    uint16_t idx = (uint16_t)(entry - t->entries);
+    t->dirty[idx / 32] |= (uint32_t)1 << (idx % 32);
 }
 
-/* ── raw path: validation + commit (shared by all adapters) ── */
+uint16_t reg_poll(RegTable *t)
+{
+    uint16_t fired = 0;
+    if (!t || !t->entries) return 0;
 
-RegResult reg_set_raw(const RegEntry *entry, uint32_t raw)
+    for (uint16_t idx = 0; idx < t->count; idx++) {
+        uint32_t bit = (uint32_t)1 << (idx % 32);
+        if (!(t->dirty[idx / 32] & bit)) continue;
+
+        t->dirty[idx / 32] &= ~bit;         /* clear first, then run */
+
+        const RegEntry *e = &t->entries[idx];
+        if (e->on_change) {
+            e->on_change(e);
+            fired++;
+        }
+    }
+    return fired;
+}
+
+/* -- raw path: validation + commit (shared by all adapters) -- */
+
+RegResult reg_set_raw(RegTable *t, const RegEntry *entry, uint32_t raw)
 {
     if (entry->perm == REG_RO) {
         return REG_ERR_READONLY;
@@ -89,6 +153,12 @@ RegResult reg_set_raw(const RegEntry *entry, uint32_t raw)
     case REG_U16:
         if (raw > 0xFFFF) return REG_ERR_RANGE;
         break;
+    case REG_I8:
+        if ((int32_t)raw < INT8_MIN || (int32_t)raw > INT8_MAX) return REG_ERR_RANGE;
+        break;
+    case REG_I16:
+        if ((int32_t)raw < INT16_MIN || (int32_t)raw > INT16_MAX) return REG_ERR_RANGE;
+        break;
     case REG_BOOL:
         raw = raw ? 1 : 0;
         break;
@@ -96,21 +166,17 @@ RegResult reg_set_raw(const RegEntry *entry, uint32_t raw)
         break;
     }
 
-    /* user range check */
+    /* user range check, in the type's own domain */
     if (has_range(entry)) {
         if (entry->type == REG_FLOAT) {
             float f;
             memcpy(&f, &raw, 4);
-            if (f < (float)entry->min || f > (float)entry->max) {
-                return REG_ERR_RANGE;
-            }
+            if (f < entry->min.f || f > entry->max.f) return REG_ERR_RANGE;
+        } else if (is_signed(entry->type)) {
+            int32_t v = (int32_t)raw;
+            if (v < entry->min.i || v > entry->max.i) return REG_ERR_RANGE;
         } else if (entry->type != REG_BOOL) {
-            /* compare in 64-bit so U32 values above INT32_MAX
-             * are rejected instead of misread as negative */
-            int64_t v = (int64_t)raw;
-            if (v < entry->min || v > entry->max) {
-                return REG_ERR_RANGE;
-            }
+            if (raw < entry->min.u || raw > entry->max.u) return REG_ERR_RANGE;
         }
     }
 
@@ -118,12 +184,10 @@ RegResult reg_set_raw(const RegEntry *entry, uint32_t raw)
         if (!entry->on_write(entry, raw)) return REG_ERR_REJECTED;
     }
 
-    switch (entry->type) {
-    case REG_U8:   *(uint8_t  *)entry->ptr = (uint8_t)raw;   break;
-    case REG_U16:  *(uint16_t *)entry->ptr = (uint16_t)raw;  break;
-    case REG_U32:  *(uint32_t *)entry->ptr = raw;            break;
-    case REG_BOOL: *(uint8_t  *)entry->ptr = (uint8_t)raw;   break;
-    case REG_FLOAT: memcpy(entry->ptr, &raw, 4);             break;
+    uint32_t old = load_raw(entry);
+    store_raw(entry, raw);
+    if (old != raw) {
+        reg_mark_dirty(t, entry);
     }
 
     return REG_OK;
@@ -134,42 +198,74 @@ RegResult reg_get_raw(const RegEntry *entry, uint32_t *raw_out)
     if (entry->on_read) {
         entry->on_read(entry);
     }
-
-    switch (entry->type) {
-    case REG_U8:   *raw_out = *(uint8_t  *)entry->ptr; return REG_OK;
-    case REG_U16:  *raw_out = *(uint16_t *)entry->ptr; return REG_OK;
-    case REG_U32:  *raw_out = *(uint32_t *)entry->ptr; return REG_OK;
-    case REG_BOOL: *raw_out = *(uint8_t  *)entry->ptr ? 1 : 0; return REG_OK;
-    case REG_FLOAT: memcpy(raw_out, entry->ptr, 4);    return REG_OK;
-    }
-    return REG_ERR_TYPE;
+    *raw_out = load_raw(entry);
+    return REG_OK;
 }
 
-/* ── string layer: parse only, then delegate to raw path ── */
+/* -- string layer: parse / format, then delegate to raw path -- */
+
+int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size)
+{
+    uint32_t raw;
+    reg_get_raw(entry, &raw);
+
+    switch (entry->type) {
+    case REG_U8:
+    case REG_U16:
+    case REG_U32:
+        return snprintf(buf, buf_size, "%lu", (unsigned long)raw);
+    case REG_I8:
+    case REG_I16:
+    case REG_I32:
+        return snprintf(buf, buf_size, "%ld", (long)(int32_t)raw);
+    case REG_FLOAT: {
+        float f;
+        memcpy(&f, &raw, 4);
+        return snprintf(buf, buf_size, "%.2f", (double)f);
+    }
+    case REG_BOOL:
+        return snprintf(buf, buf_size, "%s", raw ? "true" : "false");
+    }
+    return -1;
+}
 
 static RegResult parse_unsigned(const char *s, uint32_t *out)
 {
-    /* strtoul silently accepts "-1" by wrapping — reject the
-     * sign up front so unsigned registers never see it */
+    /* strtoul accepts "-1" by wrapping; reject the sign up front */
     const char *p = s;
     while (*p == ' ' || *p == '\t') p++;
     if (*p == '-') return REG_ERR_TYPE;
 
     char *end;
     errno = 0;
-    unsigned long ulval = strtoul(s, &end, 0);
+    unsigned long v = strtoul(s, &end, 0);
     if (end == s || *end != '\0') return REG_ERR_TYPE;
     if (errno == ERANGE) return REG_ERR_RANGE;
 #if ULONG_MAX > 0xFFFFFFFFUL
-    if (ulval > 0xFFFFFFFFUL) return REG_ERR_RANGE;
+    if (v > 0xFFFFFFFFUL) return REG_ERR_RANGE;
 #endif
-    *out = (uint32_t)ulval;
+    *out = (uint32_t)v;
     return REG_OK;
 }
 
-RegResult reg_set_str(const RegEntry *entry, const char *value_str)
+static RegResult parse_signed(const char *s, uint32_t *out)
+{
+    char *end;
+    errno = 0;
+    long v = strtol(s, &end, 0);
+    if (end == s || *end != '\0') return REG_ERR_TYPE;
+    if (errno == ERANGE) return REG_ERR_RANGE;
+#if LONG_MAX > 0x7FFFFFFFL
+    if (v < INT32_MIN || v > INT32_MAX) return REG_ERR_RANGE;
+#endif
+    *out = (uint32_t)(int32_t)v;
+    return REG_OK;
+}
+
+RegResult reg_set_str(RegTable *t, const RegEntry *entry, const char *value_str)
 {
     uint32_t raw = 0;
+    RegResult r;
 
     switch (entry->type) {
     case REG_BOOL:
@@ -184,20 +280,26 @@ RegResult reg_set_str(const RegEntry *entry, const char *value_str)
 
     case REG_U8:
     case REG_U16:
-    case REG_U32: {
-        RegResult r = parse_unsigned(value_str, &raw);
+    case REG_U32:
+        r = parse_unsigned(value_str, &raw);
         if (r != REG_OK) return r;
         break;
-    }
+
+    case REG_I8:
+    case REG_I16:
+    case REG_I32:
+        r = parse_signed(value_str, &raw);
+        if (r != REG_OK) return r;
+        break;
 
     case REG_FLOAT: {
         char *end;
-        float fval = (float)strtod(value_str, &end);
+        float f = (float)strtod(value_str, &end);
         if (end == value_str || *end != '\0') return REG_ERR_TYPE;
-        memcpy(&raw, &fval, 4);
+        memcpy(&raw, &f, 4);
         break;
     }
     }
 
-    return reg_set_raw(entry, raw);
+    return reg_set_raw(t, entry, raw);
 }
