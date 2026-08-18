@@ -79,8 +79,11 @@ static const RegEntry registry[] = {
 static char   cap[1024];
 static size_t cap_len;
 
+static int    cap_writes;   /* transport calls, to check batching */
+
 static int cap_write(const uint8_t *buf, uint16_t len)
 {
+    cap_writes++;
     if (cap_len + len < sizeof(cap)) {
         memcpy(cap + cap_len, buf, len);
         cap_len += len;
@@ -365,6 +368,91 @@ static void test_line_editing(void)
     reg_poll(&table);
 }
 
+static void test_json(void)
+{
+    /* single objects, exact */
+    EXPECT("info interval --json",
+        "{\"name\":\"interval\",\"type\":\"U16\",\"perm\":\"RW\",\"value\":500,"
+        "\"min\":100,\"max\":60000,\"modbus\":0,\"desc\":\"Sampling interval in ms\"}\r\n");
+    EXPECT("info --json offset",                       /* flag position is free */
+        "{\"name\":\"offset\",\"type\":\"I16\",\"perm\":\"RW\",\"value\":-10,"
+        "\"min\":-50,\"max\":50,\"modbus\":0}\r\n");
+    EXPECT("info gain --json",
+        "{\"name\":\"gain\",\"type\":\"FLOAT\",\"perm\":\"RW\",\"value\":1.5,"
+        "\"min\":0.5,\"max\":2.5,\"modbus\":0}\r\n");
+    EXPECT("info led --json",
+        "{\"name\":\"led\",\"type\":\"BOOL\",\"perm\":\"RW\",\"value\":true,\"modbus\":0}\r\n");
+    EXPECT("info nothing --json", "{\"error\":\"ERR: not found\"}\r\n");
+
+    /* whole table: array, comma-separated, first and last entry present */
+    const char *all = run("list --json");
+    cases++;
+    if (!(all[0] == '[' &&
+          strstr(all, "{\"name\":\"temp\",") == all + 1 &&
+          strstr(all, "},{\"name\":\"interval\"") != NULL &&
+          strstr(all, "{\"name\":\"hwreg\",\"type\":\"U32\",\"perm\":\"RW\",\"value\":3735928559,\"modbus\":0}]\r\n") != NULL)) {
+        failures++;
+        printf("FAIL %s:%d  list --json shape\n   got: %s\n", __FILE__, __LINE__, all);
+    }
+
+    /* --json on a command that ignores it is harmless */
+    EXPECT("get led --json", "true\r\n");
+
+    /* floats: JSON path reads the raw value, not the "%.2f" text.
+     * temp is RO so poke the variable directly. */
+    float saved = temperature;
+    temperature = 0.004f;                       /* "%.2f" would say 0.00 */
+    CONTAINS("info temp --json", "\"value\":0.00400000019,");
+    temperature = 3.40282347e+38f;              /* FLT_MAX, bounded output */
+    CONTAINS("info temp --json", "\"value\":3.40282347e+38,");
+    {
+        uint32_t nan_bits = 0x7FC00000u;        /* NaN has no JSON form */
+        memcpy(&temperature, &nan_bits, sizeof(temperature));
+    }
+    CONTAINS("info temp --json", "\"value\":null,");
+    temperature = saved;
+}
+
+/* strings with characters that must be escaped */
+static uint8_t esc_var = 0;
+static void test_json_escape(void)
+{
+    static const RegEntry reg2[] = {
+        { .name = "q", .ptr = &esc_var, .type = REG_U8, .perm = REG_RO,
+          .description = "say \"hi\" \\ tab\there\nnew" },
+        { .name = NULL }
+    };
+    RegTable t2;
+    RegCli   c2;
+    RegTransport tx = { .read = cap_read, .write = cap_write };
+    CHECK(reg_table_init(&t2, reg2) == REG_OK);
+    regcli_init(&c2, &t2, tx);
+    c2.echo = false;
+
+    cap_len = 0; cap[0] = '\0';
+    for (const char *p = "info q --json\n"; *p; p++) regcli_feed(&c2, (uint8_t)*p);
+    CHECK(strcmp(cap,
+        "{\"name\":\"q\",\"type\":\"U8\",\"perm\":\"RO\",\"value\":0,\"modbus\":0,"
+        "\"desc\":\"say \\\"hi\\\" \\\\ tab\\there\\nnew\"}\r\n") == 0);
+
+    /* plain runs go out in one write each, not one byte per call:
+     * a 160-char description with nothing to escape must not cost
+     * 160 transport calls */
+    static const RegEntry reg3[] = {
+        { .name = "p", .ptr = &esc_var, .type = REG_U8, .perm = REG_RO,
+          .description =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            "0123456789abcdef0123456789abcdef" },
+        { .name = NULL }
+    };
+    CHECK(reg_table_init(&t2, reg3) == REG_OK);
+    cap_len = 0; cap[0] = '\0'; cap_writes = 0;
+    for (const char *p = "info p --json\n"; *p; p++) regcli_feed(&c2, (uint8_t)*p);
+    CHECK(strstr(cap, "\"desc\":\"0123456789abcdef") != NULL);
+    CHECK(cap_writes < 30);
+}
+
 /* a description longer than cli_print's 128-byte scratch buffer:
  * output must be truncated, never over-read */
 static uint8_t long_desc_var = 1;
@@ -437,6 +525,8 @@ int main(void)
     test_raw_api();
     test_list_and_info();
     test_line_editing();
+    test_json();
+    test_json_escape();
     test_long_description();
     test_overflow_line();
 

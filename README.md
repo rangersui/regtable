@@ -79,7 +79,7 @@ make run          # Linux, macOS, Git Bash, or Windows cmd with make on PATH
 
 Then type `help`, `list`, `set led true`, `get voltage`, `info pump`. The example, [example_desktop.c](example_desktop.c), is a tutorial: it walks through STEP 1 to 5 (state, hooks, table, transport, main loop) with `/* your ... here */` markers where you add your own. All three hooks are shown working. Everything you write there moves to the MCU as-is; only the transport functions change.
 
-`make test` (or `.\build test`) runs the regression suite in [regtable_test.c](regtable_test.c): 114 checks covering parsing, ranges, every type, all three hooks, deferred change tracking, and line editing. It's plain C with a capture transport, so it runs anywhere the library compiles.
+`make test` (or `.\build test`) runs the regression suite in [regtable_test.c](regtable_test.c): 145 checks covering parsing, ranges, every type, all three hooks, deferred change tracking, line editing, and JSON output. It's plain C with a capture transport, so it runs anywhere the library compiles.
 
 ## Quick start on the MCU
 
@@ -164,7 +164,12 @@ value:  1000
 range:  100..60000
 modbus: 0x0000
 desc:   Sampling interval in ms
+
+> info interval --json
+{"name":"interval","type":"U16","perm":"RW","value":1000,"min":100,"max":60000,"modbus":0,"desc":"Sampling interval in ms"}
 ```
+
+`list --json` returns the whole table as one array. A host program (an MCP server, a Web UI, a test script) can discover every register, its type, its limits, and its description from the device itself, then drive it with plain `get` / `set`.
 
 ## What the library handles
 
@@ -184,7 +189,7 @@ desc:   Sampling interval in ms
 | MQTT state publish / command subscribe | 🔲 Planned |
 | MCP server generation from YAML | 🔲 Planned |
 | Web UI via Web Serial / Web Bluetooth | 🔲 Planned |
-| JSON output mode (`list --json`) | 🔲 Planned |
+| JSON output (`list --json`, `info <name> --json`), no parser or allocation | ✅ Done |
 
 ## Design principles
 

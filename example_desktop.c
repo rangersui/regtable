@@ -10,6 +10,7 @@
  *   Build:  make            (or build.bat in cmd)
  *   Run:    make run        (or example.exe)
  *   Then type:  help / list / get temp / set led true / info gain
+ *               list --json   (what a host program would ask for)
  *
  * Follow STEP 1..5 below. Lines marked "your ..." are the ones
  * you edit.
