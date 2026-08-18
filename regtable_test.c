@@ -155,8 +155,6 @@ static void test_get_set_basic(void)
     EXPECT("get nothing",        "ERR: not found\r\n");
     EXPECT("set nothing 1",      "ERR: not found\r\n");
     EXPECT("bogus",              "ERR: unknown command. type 'help'\r\n");
-    EXPECT("get",                "ERR: unknown command. type 'help'\r\n");
-    EXPECT("set led",            "ERR: unknown command. type 'help'\r\n");
     EXPECT("",                   "");
     EXPECT("   ",                "");
 }
@@ -408,7 +406,7 @@ static void test_json(void)
     EXPECT("set led true --json",    "{\"result\":\"OK\"}\r\n");   CHECK(led_state == 1);
     EXPECT("set interval 1 --json",  "{\"error\":\"ERR: out of range\"}\r\n");
     EXPECT("set counter 1 --json",   "{\"error\":\"ERR: read-only\"}\r\n");
-    EXPECT("bogus --json",           "{\"error\":\"ERR: unknown command\"}\r\n");
+    EXPECT("bogus --json",           "{\"error\":\"ERR: unknown command. type 'help'\"}\r\n");
 
     /* floats: JSON path reads the raw value, not the "%.2f" text.
      * temp is RO so poke the variable directly. */
@@ -508,13 +506,41 @@ static void test_long_description(void)
 
 static void test_overflow_line(void)
 {
-    /* a line longer than the buffer is truncated, not overrun */
+    /* a line longer than the buffer is rejected whole, not run
+     * truncated: a cut "set interval 60000" must not become
+     * "set interval 6" */
     char big[REGTABLE_CLI_BUF_SIZE + 50];
     memset(big, 'x', sizeof(big) - 1);
     big[sizeof(big) - 1] = '\0';
-    run(big);                               /* must not crash */
-    CHECK(strstr(cap, "ERR: unknown command") != NULL);
+    EXPECT(big, "ERR: line too long\r\n");
     EXPECT("get led", "true\r\n");          /* CLI still works after */
+
+    /* padding puts "60000" across the buffer edge so only "60" fits;
+     * the line is rejected and nothing is written */
+    char cut[REGTABLE_CLI_BUF_SIZE + 8];
+    memset(cut, ' ', sizeof(cut) - 1);
+    memcpy(cut, "set setpoint", 12);
+    memcpy(cut + REGTABLE_CLI_BUF_SIZE - 3, "60000", 5);
+    cut[sizeof(cut) - 1] = '\0';
+    uint32_t before = setpoint;
+    EXPECT(cut, "ERR: line too long\r\n");
+    CHECK(setpoint == before);
+}
+
+static void test_arg_count(void)
+{
+    /* wrong argument counts say so, they are not "unknown command"
+     * and extras are not swallowed */
+    EXPECT("get",                    "ERR: usage: get <name>\r\n");
+    EXPECT("set led",                "ERR: usage: set <name> <value>\r\n");
+    EXPECT("set led 1 junk",         "ERR: usage: set <name> <value>\r\n");
+    EXPECT("info",                   "ERR: usage: info <name>\r\n");
+    EXPECT("list extra",             "ERR: usage: list\r\n");
+    EXPECT("help me",                "ERR: usage: help\r\n");
+    EXPECT("set led --json",         "{\"error\":\"ERR: usage: set <name> <value>\"}\r\n");
+    EXPECT("set led 1 junk --json",  "ERR: too many arguments\r\n");   /* over MAX_ARGS */
+    EXPECT("a b c d e",              "ERR: too many arguments\r\n");
+    EXPECT("get led",                "true\r\n");                      /* still fine */
 }
 
 /* -- main -------------------------------------------------- */
@@ -548,6 +574,7 @@ int main(void)
     test_json_escape();
     test_long_description();
     test_overflow_line();
+    test_arg_count();
 
     if (failures) {
         printf("\n%d of %d checks FAILED\n", failures, cases);

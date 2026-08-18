@@ -128,17 +128,30 @@ static void json_error(RegCli *cli, RegResult r)
     json_error_str(cli, reg_result_str(r));
 }
 
+/* an error line in whichever format the caller asked for */
+static void cli_error(RegCli *cli, const char *msg, bool json)
+{
+    if (json) {
+        json_error_str(cli, msg);
+    } else {
+        cli_puts(cli, msg);
+        cli_puts(cli, "\r\n");
+    }
+}
+
 /* -- tokeniser: splits the line in place, argv points into it -- */
 
+/* returns the token count, or -1 if the line holds more than max_args */
 static int cli_split(char *line, char **argv, int max_args)
 {
     int argc = 0;
     char *p = line;
 
-    while (*p && argc < max_args) {
+    for (;;) {
         /* skip leading spaces */
         while (*p == ' ' || *p == '\t') p++;
         if (*p == '\0') break;
+        if (argc == max_args) return -1;
 
         argv[argc++] = p;
 
@@ -284,6 +297,10 @@ static void cli_process(RegCli *cli, char *line)
     if (argc == 0) {
         return;
     }
+    if (argc < 0) {
+        cli_error(cli, "ERR: too many arguments", false);
+        return;
+    }
 
     /* pull "--json" out of argv wherever it sits */
     bool json = false;
@@ -296,21 +313,33 @@ static void cli_process(RegCli *cli, char *line)
         }
     }
 
-    if (strcmp(argv[0], "list") == 0) {
-        cmd_list(cli, json);
-    } else if (strcmp(argv[0], "get") == 0 && argc >= 2) {
-        cmd_get(cli, argv[1], json);
-    } else if (strcmp(argv[0], "set") == 0 && argc >= 3) {
-        cmd_set(cli, argv[1], argv[2], json);
-    } else if (strcmp(argv[0], "info") == 0 && argc >= 2) {
-        cmd_info(cli, argv[1], json);
-    } else if (strcmp(argv[0], "help") == 0) {
-        cmd_help(cli);
-    } else if (json) {
-        json_error_str(cli, "ERR: unknown command");
-    } else {
-        cli_puts(cli, "ERR: unknown command. type 'help'\r\n");
+    /* each command takes an exact number of arguments; anything
+     * else is an error, never a guess */
+    static const struct { const char *name; int argc; const char *usage; } cmds[] = {
+        { "list", 1, "ERR: usage: list" },
+        { "get",  2, "ERR: usage: get <name>" },
+        { "set",  3, "ERR: usage: set <name> <value>" },
+        { "info", 2, "ERR: usage: info <name>" },
+        { "help", 1, "ERR: usage: help" },
+    };
+    const char *usage = NULL;
+    for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {
+        if (strcmp(argv[0], cmds[i].name) == 0) {
+            usage = cmds[i].usage;
+            if (argc != cmds[i].argc) { cli_error(cli, usage, json); return; }
+            break;
+        }
     }
+    if (!usage) {
+        cli_error(cli, "ERR: unknown command. type 'help'", json);
+        return;
+    }
+
+    if      (strcmp(argv[0], "list") == 0) cmd_list(cli, json);
+    else if (strcmp(argv[0], "get")  == 0) cmd_get(cli, argv[1], json);
+    else if (strcmp(argv[0], "set")  == 0) cmd_set(cli, argv[1], argv[2], json);
+    else if (strcmp(argv[0], "info") == 0) cmd_info(cli, argv[1], json);
+    else                                   cmd_help(cli);
 }
 
 /* -- public API ------------------------------------------ */
@@ -321,6 +350,7 @@ void regcli_init(RegCli *cli, RegTable *table, RegTransport tx)
     cli->tx    = tx;
     cli->pos   = 0;
     cli->echo  = true;
+    cli->overflow = false;
 }
 
 void regcli_feed(RegCli *cli, uint8_t byte)
@@ -332,7 +362,14 @@ void regcli_feed(RegCli *cli, uint8_t byte)
 
     /* line endings */
     if (byte == '\n' || byte == '\r') {
-        if (cli->pos > 0) {
+        if (cli->overflow) {
+            /* the line was cut; running the remainder could write a
+             * different, valid-looking value. Drop it whole. */
+            if (cli->echo) cli_puts(cli, "\r\n");
+            cli_puts(cli, "ERR: line too long\r\n");
+            cli->overflow = false;
+            cli->pos = 0;
+        } else if (cli->pos > 0) {
             if (cli->echo) {
                 cli_puts(cli, "\r\n");
             }
@@ -354,8 +391,11 @@ void regcli_feed(RegCli *cli, uint8_t byte)
         return;
     }
 
-    /* normal char; beyond the buffer, keystrokes are dropped */
+    /* normal char; past the buffer the line is marked bad and
+     * rejected at the line ending */
     if (cli->pos < REGTABLE_CLI_BUF_SIZE - 1) {
         cli->buf[cli->pos++] = (char)byte;
+    } else {
+        cli->overflow = true;
     }
 }

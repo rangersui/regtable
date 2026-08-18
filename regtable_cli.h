@@ -21,6 +21,7 @@ typedef struct RegCli {
     char            buf[REGTABLE_CLI_BUF_SIZE];  /* current line  */
     uint16_t        pos;        /* chars in buf so far            */
     bool            echo;       /* echo typed chars back (default on) */
+    bool            overflow;   /* line outgrew buf: reject it at line end */
 } RegCli;
 
 /* -- API ------------------------------------------------- */
