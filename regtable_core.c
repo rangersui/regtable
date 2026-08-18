@@ -248,7 +248,9 @@ int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size)
     case REG_FLOAT: {
         float f;
         memcpy(&f, &raw, 4);
-        return snprintf(buf, buf_size, "%.2f", (double)f);
+        /* %g keeps the length bounded (~13 chars at most), so a large
+         * value shows as 3e+38 instead of being cut mid-digits */
+        return snprintf(buf, buf_size, "%.6g", (double)f);
     }
     case REG_BOOL:
         return snprintf(buf, buf_size, "%s", raw ? "true" : "false");

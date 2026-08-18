@@ -149,7 +149,7 @@ static const char *run(const char *line)
 
 static void test_get_set_basic(void)
 {
-    EXPECT("get temp",           "23.40\r\n");
+    EXPECT("get temp",           "23.4\r\n");
     EXPECT("set temp 30",        "ERR: read-only\r\n");
     EXPECT("set counter 5",      "ERR: read-only\r\n");
     EXPECT("get nothing",        "ERR: not found\r\n");
@@ -343,7 +343,7 @@ static void test_list_and_info(void)
     CONTAINS("info interval", "range:  100..60000\r\n");
     CONTAINS("info interval", "desc:   Sampling interval in ms\r\n");
     CONTAINS("info offset",   "range:  -50..50\r\n");
-    CONTAINS("info gain",     "range:  0.50..2.50\r\n");
+    CONTAINS("info gain",     "range:  0.5..2.5\r\n");
     CONTAINS("info counter",  "modbus: 0x0000\r\n");
     EXPECT  ("info nothing",  "ERR: not found\r\n");
     CONTAINS("help",          "  info <name>         show register metadata\r\n");
@@ -395,8 +395,16 @@ static void test_json(void)
         printf("FAIL %s:%d  list --json shape\n   got: %s\n", __FILE__, __LINE__, all);
     }
 
-    /* --json on a command that ignores it is harmless */
-    EXPECT("get led --json", "true\r\n");
+    /* get / set / errors are JSON too, so a client in JSON mode
+     * never sees a mixed format */
+    EXPECT("get led --json",         "{\"value\":true}\r\n");
+    EXPECT("get gain --json",        "{\"value\":1.5}\r\n");
+    EXPECT("get nothing --json",     "{\"error\":\"ERR: not found\"}\r\n");
+    EXPECT("set led false --json",   "{\"result\":\"OK\"}\r\n");   CHECK(led_state == 0);
+    EXPECT("set led true --json",    "{\"result\":\"OK\"}\r\n");   CHECK(led_state == 1);
+    EXPECT("set interval 1 --json",  "{\"error\":\"ERR: out of range\"}\r\n");
+    EXPECT("set counter 1 --json",   "{\"error\":\"ERR: read-only\"}\r\n");
+    EXPECT("bogus --json",           "{\"error\":\"ERR: unknown command\"}\r\n");
 
     /* floats: JSON path reads the raw value, not the "%.2f" text.
      * temp is RO so poke the variable directly. */
@@ -410,6 +418,14 @@ static void test_json(void)
         memcpy(&temperature, &nan_bits, sizeof(temperature));
     }
     CONTAINS("info temp --json", "\"value\":null,");
+    temperature = saved;
+
+    /* text path: bounded length, large values keep their magnitude
+     * instead of being cut mid-digits by the 32-byte value buffer */
+    temperature = 3e38f;
+    EXPECT("get temp", "3e+38\r\n");
+    temperature = 0.004f;
+    EXPECT("get temp", "0.004\r\n");
     temperature = saved;
 }
 

@@ -116,11 +116,16 @@ static void json_entry(RegCli *cli, const RegEntry *e)
     cli_puts(cli, "}");
 }
 
-static void json_error(RegCli *cli, RegResult r)
+static void json_error_str(RegCli *cli, const char *msg)
 {
     cli_puts(cli, "{\"error\":");
-    json_str(cli, reg_result_str(r));
+    json_str(cli, msg);
     cli_puts(cli, "}\r\n");
+}
+
+static void json_error(RegCli *cli, RegResult r)
+{
+    json_error_str(cli, reg_result_str(r));
 }
 
 /* -- tokeniser: splits the line in place, argv points into it -- */
@@ -173,12 +178,30 @@ static void cmd_list(RegCli *cli, bool json)
     }
 }
 
-static void cmd_get(RegCli *cli, const char *name)
+/* status line: "OK" / "ERR: ..." as text, {"result":..} / {"error":..} as JSON */
+static void cli_result(RegCli *cli, RegResult r, bool json)
+{
+    if (!json) {
+        cli_puts(cli, reg_result_str(r));
+        cli_puts(cli, "\r\n");
+    } else if (r == REG_OK) {
+        cli_puts(cli, "{\"result\":\"OK\"}\r\n");
+    } else {
+        json_error(cli, r);
+    }
+}
+
+static void cmd_get(RegCli *cli, const char *name, bool json)
 {
     const RegEntry *e = reg_find(cli->table, name);
     if (!e) {
-        cli_puts(cli, reg_result_str(REG_ERR_NOT_FOUND));
-        cli_puts(cli, "\r\n");
+        cli_result(cli, REG_ERR_NOT_FOUND, json);
+        return;
+    }
+    if (json) {
+        cli_puts(cli, "{\"value\":");
+        json_value(cli, e);
+        cli_puts(cli, "}\r\n");
         return;
     }
     char vbuf[32];
@@ -187,26 +210,21 @@ static void cmd_get(RegCli *cli, const char *name)
     cli_puts(cli, "\r\n");
 }
 
-static void cmd_set(RegCli *cli, const char *name, const char *value)
+static void cmd_set(RegCli *cli, const char *name, const char *value, bool json)
 {
     const RegEntry *e = reg_find(cli->table, name);
     if (!e) {
-        cli_puts(cli, reg_result_str(REG_ERR_NOT_FOUND));
-        cli_puts(cli, "\r\n");
+        cli_result(cli, REG_ERR_NOT_FOUND, json);
         return;
     }
-    RegResult r = reg_set_str(cli->table, e, value);
-    cli_puts(cli, reg_result_str(r));
-    cli_puts(cli, "\r\n");
+    cli_result(cli, reg_set_str(cli->table, e, value), json);
 }
 
 static void cmd_info(RegCli *cli, const char *name, bool json)
 {
     const RegEntry *e = reg_find(cli->table, name);
     if (!e) {
-        if (json) { json_error(cli, REG_ERR_NOT_FOUND); return; }
-        cli_puts(cli, reg_result_str(REG_ERR_NOT_FOUND));
-        cli_puts(cli, "\r\n");
+        cli_result(cli, REG_ERR_NOT_FOUND, json);
         return;
     }
 
@@ -229,7 +247,7 @@ static void cmd_info(RegCli *cli, const char *name, bool json)
             cli_print(cli, "range:  %ld..%ld\r\n", (long)e->min.i, (long)e->max.i);
             break;
         case REG_FLOAT:
-            cli_print(cli, "range:  %.2f..%.2f\r\n", (double)e->min.f, (double)e->max.f);
+            cli_print(cli, "range:  %.6g..%.6g\r\n", (double)e->min.f, (double)e->max.f);
             break;
         default:
             cli_print(cli, "range:  %lu..%lu\r\n",
@@ -253,7 +271,7 @@ static void cmd_help(RegCli *cli)
     cli_puts(cli, "  info <name>         show register metadata\r\n");
     cli_puts(cli, "  list                show all registers\r\n");
     cli_puts(cli, "  help                show this message\r\n");
-    cli_puts(cli, "  add --json to list or info for machine-readable output\r\n");
+    cli_puts(cli, "  add --json to list/get/set/info for machine-readable output\r\n");
 }
 
 /* -- line processor -------------------------------------- */
@@ -281,13 +299,15 @@ static void cli_process(RegCli *cli, char *line)
     if (strcmp(argv[0], "list") == 0) {
         cmd_list(cli, json);
     } else if (strcmp(argv[0], "get") == 0 && argc >= 2) {
-        cmd_get(cli, argv[1]);
+        cmd_get(cli, argv[1], json);
     } else if (strcmp(argv[0], "set") == 0 && argc >= 3) {
-        cmd_set(cli, argv[1], argv[2]);
+        cmd_set(cli, argv[1], argv[2], json);
     } else if (strcmp(argv[0], "info") == 0 && argc >= 2) {
         cmd_info(cli, argv[1], json);
     } else if (strcmp(argv[0], "help") == 0) {
         cmd_help(cli);
+    } else if (json) {
+        json_error_str(cli, "ERR: unknown command");
     } else {
         cli_puts(cli, "ERR: unknown command. type 'help'\r\n");
     }

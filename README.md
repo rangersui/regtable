@@ -79,7 +79,7 @@ make run          # Linux, macOS, Git Bash, or Windows cmd with make on PATH
 
 Then type `help`, `list`, `set led true`, `get voltage`, `info pump`. The example, [example_desktop.c](example_desktop.c), is a tutorial: it walks through STEP 1 to 5 (state, hooks, table, transport, main loop) with `/* your ... here */` markers where you add your own. All three hooks are shown working. Everything you write there moves to the MCU as-is; only the transport functions change.
 
-`make test` (or `.\build test`) runs the regression suite in [regtable_test.c](regtable_test.c): 145 checks covering parsing, ranges, every type, all three hooks, deferred change tracking, line editing, and JSON output. It's plain C with a capture transport, so it runs anywhere the library compiles.
+`make test` (or `.\build test`) runs the regression suite in [regtable_test.c](regtable_test.c): 156 checks covering parsing, ranges, every type, all three hooks, deferred change tracking, line editing, and JSON output. It's plain C with a capture transport, so it runs anywhere the library compiles.
 
 ## Quick start on the MCU
 
@@ -143,7 +143,7 @@ Connect PuTTY at 115200:
 > list
 NAME            TYPE   PERM  VALUE
 --------------------------------------------
-temp            FLOAT  RO    23.40
+temp            FLOAT  RO    23.4
 interval        U16    RW    1000
 led             BOOL   RW    false
 
@@ -167,9 +167,15 @@ desc:   Sampling interval in ms
 
 > info interval --json
 {"name":"interval","type":"U16","perm":"RW","value":1000,"min":100,"max":60000,"modbus":0,"desc":"Sampling interval in ms"}
+
+> set interval 500 --json
+{"result":"OK"}
+
+> get interval --json
+{"value":500}
 ```
 
-`list --json` returns the whole table as one array. A host program (an MCP server, a Web UI, a test script) can discover every register, its type, its limits, and its description from the device itself, then drive it with plain `get` / `set`.
+`--json` works on `list`, `get`, `set` and `info`: `list --json` returns the whole table as one array, `get` and `set` answer with one small object, errors come back as `{"error":"..."}`. A host program (an MCP server, a Web UI, a test script) can discover every register, its type, its limits, and its description from the device itself, then drive it in the same format.
 
 ## What the library handles
 
@@ -189,7 +195,7 @@ desc:   Sampling interval in ms
 | MQTT state publish / command subscribe | 🔲 Planned |
 | MCP server generation from YAML | 🔲 Planned |
 | Web UI via Web Serial / Web Bluetooth | 🔲 Planned |
-| JSON output (`list --json`, `info <name> --json`), no parser or allocation | ✅ Done |
+| JSON output (`--json` on list/get/set/info), no parser or allocation | ✅ Done |
 
 ## Design principles
 
@@ -254,7 +260,7 @@ Three side-effect points on the access path. The core moves data; hooks are wher
 
 ## Resource budget
 
-- Flash: ~3-5 KB runtime library. Note: FLOAT registers use `%f` formatting, which on newlib-nano requires `-u _printf_float` (adds several KB); a minimal built-in float formatter is a planned alternative.
+- Flash: ~3-5 KB runtime library. Note: FLOAT registers use printf floating-point formatting, which on newlib-nano requires `-u _printf_float` (adds several KB); a minimal built-in float formatter is a planned alternative.
 - Register table: ~44 bytes per entry, in flash (`const`).
 - RAM: one `RegTable` handle (~16 bytes at the default 64-entry bitmap) plus one `RegCli` context (~140 bytes with the default 128-byte line buffer).
 - Stack: ~200 bytes during command processing.
