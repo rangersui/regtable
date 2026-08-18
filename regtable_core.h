@@ -124,14 +124,14 @@ RegResult reg_get_raw(const RegEntry *entry, uint32_t *raw_out);
 /*  Change tracking: one dirty bitmap, two ways in, one way out.
  *
  *  In:  reg_set_raw sets the bit when a write (from any adapter)
- *       changes the value. reg_mark_dirty sets it when your own
- *       C code changed *ptr directly (temp = read_sensor()).
+ *       changes the value. reg_mark_dirty sets it when application
+ *       code changed *ptr directly (temp = read_sensor()).
  *  Out: reg_poll walks the bitmap in table order, clears each bit,
  *       runs that entry's on_change. It does not know or care who
  *       set the bit.
  *
- *  Call reg_poll from your main loop, at whatever cadence you
- *  choose. Returns the number of hooks run.
+ *  reg_poll is called from the main loop, at any cadence. Returns
+ *  the number of hooks run.
  *
  *  Both sides touch the bitmap with plain read-modify-write, so
  *  they belong in the same context: call reg_mark_dirty from the

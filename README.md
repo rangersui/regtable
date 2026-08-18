@@ -4,31 +4,23 @@ Expose any Cortex-M MCU's state the way a PLC exposes its registers: one registe
 
 ## What it does
 
-You define a table of named registers (your variables + selected hardware peripherals). The library exposes them through:
+A table of named registers (C variables plus selected hardware peripherals) is exposed through:
 
-- **Serial CLI** `get temp`, `set led true`, `info interval`, `list`
+- **Serial CLI** `get temp`, `set led true`, `info interval`, `list`, all with `--json`
 - **Modbus RTU** any SCADA / HMI / PLC master can read/write (planned)
 - **MQTT** publish state, subscribe to commands (planned)
-- **MCP** AI agents operate your device (planned)
+- **MCP** AI agents operate the device (planned)
 - **Web UI** browser connects via Web Serial / Web Bluetooth (planned)
 
 All interfaces share one typed access path: `reg_set_raw()` / `reg_get_raw()`. Type checking, permission enforcement, range validation, and write callbacks happen once in the core. Protocol adapters only translate wire formats.
+
+Adding a register is one line in the table. Switching from UART to BLE is swapping two function pointers.
 
 ## Scope
 
 regtable exposes state. It does not execute logic.
 
-Your control logic lives in your C code. regtable only makes your variables readable and writable from outside. No rule engine, no programming language, no function block library. If your `on_write` hook rejects a value or your `on_change` fires an alarm, that's your C function, not regtable's.
-
-## The idea
-
-MCU development today: you write hundreds of lines of C to configure peripherals, then repeat it for every new project, every new chip. Most of that code is configuration pretending to be programming.
-
-regtable inverts this. You declare what your device exposes:
-
-- name, type, permission, range: and the library handles access.
-- Adding a register is one line.
-- Switching from UART to BLE is swapping two function pointers.
+Control logic lives in the application's C code. regtable makes variables readable and writable from outside. No rule engine, no programming language, no function block library. When an `on_write` hook rejects a value or an `on_change` hook fires an alarm, that is application code, not regtable's.
 
 ## Architecture
 
@@ -63,11 +55,11 @@ Two layers on the device, plus host-side projections generated from the same sou
 
 Each adapter owns its transport, framing, and timing; the core table knows nothing about wire formats. One YAML yields four outputs: the C register table, the MCP tool definitions, the Web UI, and the documentation.
 
-The key insight: MCU hardware is already memory-mapped registers. PLC programming has been register-table-driven since 1979 (Modbus). ARM ships machine-readable register descriptions with every chip (CMSIS-SVD). regtable connects these existing pieces.
+MCU hardware is already memory-mapped registers. PLC programming has been register-table-driven since Modbus. ARM ships machine-readable register descriptions with every chip (CMSIS-SVD). regtable connects these existing pieces.
 
 ## Try it on the desktop
 
-No board needed. Your terminal is the UART.
+No board needed. The terminal is the UART.
 
 ```bash
 make run          # Linux, macOS, Git Bash, or Windows cmd with make on PATH
@@ -77,21 +69,21 @@ make run          # Linux, macOS, Git Bash, or Windows cmd with make on PATH
 .\build run       # Windows cmd without make (needs gcc or clang on PATH)
 ```
 
-Then type `help`, `list`, `set led true`, `get voltage`, `info pump`. The example, [example_desktop.c](example_desktop.c), is a tutorial: it walks through STEP 1 to 5 (state, hooks, table, transport, main loop) with `/* your ... here */` markers where you add your own. All three hooks are shown working. Everything you write there moves to the MCU as-is; only the transport functions change.
+Then type `help`, `list`, `set led true`, `get voltage`, `info pump`. The example, [example_desktop.c](example_desktop.c), is a tutorial: STEP 1 to 5 (state, hooks, table, transport, main loop) with `/* ... here */` markers where application code goes. All three hooks are shown working. Everything in it moves to the MCU as-is; only the transport functions change.
 
-`make test` (or `.\build test`) runs the regression suite in [regtable_test.c](regtable_test.c): 160 checks covering parsing, ranges, every type, all three hooks, deferred change tracking, line editing, and JSON output. It's plain C with a capture transport, so it runs anywhere the library compiles.
+`make test` (or `.\build test`) runs the regression suite in [regtable_test.c](regtable_test.c). It is plain C with a capture transport, so it runs anywhere the library compiles. `make strict` is the same with `-Werror`.
 
 ## Quick start on the MCU
 
 ```c
 #include "regtable_cli.h"
 
-// 1. Define your state
+// 1. State
 static float    temp     = 23.4f;
 static uint16_t interval = 1000;
 static uint8_t  led      = 0;
 
-// 2. Declare the register table
+// 2. Register table
 static void led_changed(const RegEntry *e) { HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, led); }
 
 static const RegEntry registry[] = {
@@ -103,7 +95,7 @@ static const RegEntry registry[] = {
     { .name = NULL }
 };
 
-// 3. Provide transport (platform-specific, ~5 lines)
+// 3. Transport (platform-specific)
 static int my_write(const uint8_t *buf, uint16_t len) {
     return HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, 100);
 }
@@ -129,7 +121,7 @@ int main(void) {
             regcli_feed(&cli, byte);
         }
 
-        temp = read_sensor();                       // your business logic
+        temp = read_sensor();                       // application code
         reg_mark_dirty(&table, &registry[0]);       // tell the table it moved
 
         reg_poll(&table);                           // deferred on_change hooks run here
@@ -177,43 +169,15 @@ desc:   Sampling interval in ms
 
 `--json` works on `list`, `get`, `set` and `info`: `list --json` returns the whole table as one array, `get` and `set` answer with one small object, errors come back as `{"error":"..."}`. A host program (an MCP server, a Web UI, a test script) can discover every register, its type, its limits, and its description from the device itself, then drive it in the same format.
 
-## What the library handles
-
-| Feature | Status |
-| --- | --- |
-| Register table with name, type, permission, range | ✅ Done |
-| Types: U8/U16/U32, I8/I16/I32, FLOAT, BOOL | ✅ Done |
-| Typed core API (`reg_set_raw` / `reg_get_raw`), single validation path for all adapters | ✅ Done |
-| Serial CLI (get / set / info / list / help) | ✅ Done |
-| Transport abstraction for byte-stream adapters | ✅ Done |
-| `on_write` hook (sync guard, can veto) | ✅ Done |
-| `on_read` hook (refresh before fetch) | ✅ Done |
-| `on_change` hook (deferred, via dirty bitmap + `reg_poll`) | ✅ Done |
-| Hardware register access (GPIO ODR, ADC DR, etc.) | ✅ Supported via pointer |
-| Modbus RTU slave | 🔲 Planned |
-| Python codegen from YAML + SVD | 🔲 Planned |
-| MQTT state publish / command subscribe | 🔲 Planned |
-| MCP server generation from YAML | 🔲 Planned |
-| Web UI via Web Serial / Web Bluetooth | 🔲 Planned |
-| JSON output (`--json` on list/get/set/info), no parser or allocation | ✅ Done |
-
-## Design principles
-
-**Each register carries its own rules.** Type, permission, range, and callbacks live in the `RegEntry` struct. Any code that reads or writes a register gets the same checks automatically. You don't write `if ADC ... else if GPIO ...` in every adapter; you call `reg_get_raw()` and the entry handles the rest.
-
-**Define once, access from anywhere.** Without regtable, your CLI code knows how to read the temperature, your Modbus code knows how to read the temperature, your documentation describes how to read the temperature. With regtable, only the register table knows. CLI, Modbus, MQTT, MCP, and docs all read the same table.
-
-**Use what the industry already ships.** ARM chips come with machine-readable register descriptions (CMSIS-SVD). SCADA systems already speak Modbus. regtable plugs into both as they are.
-
 ## Atomicity
 
-Each `reg_set_raw` call is atomic at the register level: the value either fully updates or gets rejected, never half-written. But there is no multi-register transaction. If you update three PID parameters with three separate `set` calls, there is a window where some have the new value and others still have the old one. For most slow control loops this doesn't matter. If you need a group of values to take effect together, guard them in your own code (e.g. apply all three in `on_write`, or buffer them and swap in one step).
+Each `reg_set_raw` call is atomic at the register level: the value either fully updates or gets rejected, never half-written. There is no multi-register transaction. Updating three PID parameters with three separate `set` calls leaves a window where some have the new value and others still have the old one. For most slow control loops this doesn't matter. A group of values that must take effect together is guarded in application code (apply all three in `on_write`, or buffer them and swap in one step).
 
 ## Concurrency
 
-regtable takes no locks. If everything (adapters, `reg_poll`, and the code that touches your register variables) runs in one main loop or one RTOS task, you're done; skip this section.
+regtable takes no locks. When everything (adapters, `reg_poll`, and the code that touches the register variables) runs in one main loop or one RTOS task, nothing more is needed.
 
-If an ISR or another task also writes a register variable, there is a race. `reg_set_raw` does three steps:
+When an ISR or another task also writes a register variable, there is a race. `reg_set_raw` does three steps:
 
 ```
 1. old = *ptr          read the current value
@@ -231,7 +195,7 @@ reg_set_raw(&table, entry, raw);    // FreeRTOS: taskENTER_CRITICAL()
 enable_irq();                       // Arduino:  noInterrupts()
 ```
 
-regtable leaves this to you because every platform locks differently. The simplest pattern is to keep the ISR out of the table entirely: have it set its own flag or write its own variable, and let the main loop call `reg_mark_dirty` when it picks that up.
+regtable leaves this to the application because every platform locks differently. The simplest pattern keeps the ISR out of the table entirely: the ISR sets its own flag or writes its own variable, and the main loop calls `reg_mark_dirty` when it picks that up.
 
 ## Hooks
 
@@ -247,7 +211,7 @@ Three side-effect points on the access path. The core moves data; hooks are wher
 
 **`on_read` is a computed value.** From the outside, `voltage` looks like a plain float register. Inside, the hook samples the ADC, converts counts to volts, and writes the result into `*ptr` just before it's read. The caller gets engineering units and never sees the ADC.
 
-**`on_change` is telemetry.** The value changed and something outside needs to hear about it: publish it over MQTT, log it, refresh a display, light an LED that follows a switch. It is deferred: the write only sets a dirty bit, and `reg_poll()` runs the hooks later from the main loop in table order. By the time it runs the value is already stored, so it can report but not refuse. When your own C code changes a variable directly, `reg_mark_dirty()` puts it in the same queue.
+**`on_change` is telemetry.** The value changed and something outside needs to hear about it: publish it over MQTT, log it, refresh a display, light an LED that follows a switch. It is deferred: the write only sets a dirty bit, and `reg_poll()` runs the hooks later from the main loop in table order. By the time it runs the value is already stored, so it can report but not refuse. When application code changes a variable directly, `reg_mark_dirty()` puts it in the same queue.
 
 ## Design decisions (settled)
 
@@ -258,41 +222,12 @@ Three side-effect points on the access path. The core moves data; hooks are wher
 
 `RegEntry` is considered stable from here; adapters and codegen can build on it.
 
-## Resource budget
+## Resource use
 
-- Flash: ~3-5 KB runtime library. Note: FLOAT registers use printf floating-point formatting, which on newlib-nano requires `-u _printf_float` (adds several KB); a minimal built-in float formatter is a planned alternative.
-- Register table: ~44 bytes per entry, in flash (`const`).
-- RAM: one `RegTable` handle (~16 bytes at the default 64-entry bitmap) plus one `RegCli` context (~140 bytes with the default 128-byte line buffer).
-- Stack: ~200 bytes during command processing.
-- Dynamic allocation: zero.
-- Dependencies: C99 standard library only.
-
-Runs on Cortex-M0 (64 KB flash / 8 KB RAM) and up.
-
-## Files
-
-```
-regtable_core.h     Register entry struct, table handle, type/perm enums, raw convention, core API
-regtable_core.c     Lookup, typed raw get/set (validation), dirty tracking + reg_poll, string layer
-regtable_cli.h      CLI context struct
-regtable_cli.c      Non-blocking byte-fed CLI parser (get/set/info/list/help)
-example_desktop.c   Interactive desktop tutorial (STEP 1..5, all hooks demonstrated)
-regtable_test.c     Self-checking regression test, plain C
-Makefile            make / make run / make test / make clean
-build.bat           Same for Windows cmd without make
-```
-
-## Chip agnostic
-
-The library is pure C99. Platform-specific code lives entirely in two user-provided function pointers (`read` and `write`). Switching chips means changing those two function bodies, nothing else.
-
-Tested / intended targets:
-
-- STM32 (any, via HAL_UART)
-- Arduino (any, via Serial)
-- ESP32 (ESP-IDF uart driver)
-- Nordic nRF52 (nrfx_uarte)
-- Desktop (stdin/stdout, for development)
+- No dynamic allocation. Dependencies: C99 standard library only.
+- The register table is `const` and lives in flash. RAM is one `RegTable` handle (dirty bitmap) and one `RegCli` context (line buffer, `REGTABLE_CLI_BUF_SIZE`, default 128).
+- FLOAT registers use printf floating-point formatting, which on newlib-nano requires `-u _printf_float` (adds several KB); a minimal built-in float formatter is a planned alternative.
+- Platform-specific code is the two transport functions (`read`, `write`). Verified on the desktop; the STM32 HAL calls above show the shape on an MCU.
 
 ## License
 
