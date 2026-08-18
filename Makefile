@@ -4,6 +4,7 @@
 #   make run      build and start the interactive example
 #   make test     build and run the regression test
 #   make strict   rebuild everything with -Werror and run the test
+#   make fuzz     libFuzzer + ASan/UBSan on the CLI byte path (needs clang)
 #   make clean
 #
 # Works with GNU make on Linux, macOS, Git Bash, and Windows cmd
@@ -29,7 +30,7 @@ RM := rm -f
 EXAMPLE = example$(EXE)
 TEST    = regtest$(EXE)
 
-.PHONY: all run test strict clean
+.PHONY: all run test strict fuzz clean
 
 all: $(EXAMPLE) $(TEST)
 
@@ -50,5 +51,25 @@ run: $(EXAMPLE)
 test: $(TEST)
 	./$(TEST)
 
+# Coverage-guided search for inputs the regression test did not think
+# of. Seeds a corpus with a few valid lines, then runs for FUZZ_TIME
+# seconds. Crashes land in the working directory as crash-* files.
+FUZZ      = fuzz$(EXE)
+FUZZ_TIME ?= 60
+
+fuzz: regtable_fuzz.c $(LIB_SRC) $(LIB_HDR)
+	clang -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \
+	    -o $(FUZZ) regtable_fuzz.c $(LIB_SRC)
+	mkdir -p corpus
+	printf 'help\n'                      > corpus/help
+	printf 'list --json\n'               > corpus/list
+	printf 'get gain\n'                  > corpus/get
+	printf 'set gain 1.5\n'              > corpus/set1
+	printf 'set interval 0x1F4 --json\n' > corpus/set2
+	printf 'info hwreg --json\n'         > corpus/info
+	printf 'set offset -0x10\nset led TRUE\n' > corpus/multi
+	./$(FUZZ) corpus -max_len=256 -max_total_time=$(FUZZ_TIME)
+
 clean:
-	-$(RM) $(EXAMPLE) $(TEST)
+	-$(RM) $(EXAMPLE) $(TEST) $(FUZZ) fuzz.lib fuzz.exp fuzz.pdb
+	-$(RM) -r corpus crash-* leak-* timeout-*

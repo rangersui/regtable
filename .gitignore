@@ -4,3 +4,12 @@ regtest
 regtest.exe
 *.o
 *.obj
+fuzz
+fuzz.exe
+fuzz.lib
+fuzz.exp
+corpus/
+crash-*
+leak-*
+timeout-*
+fuzz.pdb
