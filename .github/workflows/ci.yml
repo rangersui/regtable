@@ -29,7 +29,6 @@ jobs:
       - uses: actions/checkout@v4
       - shell: cmd
         run: |
-          set CC=clang
           .\build strict
 
   # ILP32: long is 32 bits, so the ULONG_MAX guards compile out and
