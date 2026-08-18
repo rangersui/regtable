@@ -39,9 +39,8 @@ typedef enum RegResult {
 } RegResult;
 
 /* -- range limit ----------------------------------------- */
-/*  Read through the member that matches the entry's type:
- *  .u for U8/U16/U32, .i for I8/I16/I32, .f for FLOAT.
- *  min and max both all-zero bits = no range. */
+/*  U8/U16/U32 use .u, I8/I16/I32 use .i, FLOAT uses .f.
+ *  Both zero = no range check. */
 typedef union RegLimit {
     int32_t  i;
     uint32_t u;
@@ -63,9 +62,7 @@ typedef struct RegEntry {
     RegLimit    min;            /* .min.u / .min.i / .min.f      */
     RegLimit    max;
 
-    /* Hooks: side-effect points on the access path.
-     * The core moves data; hooks are where the outside world gets
-     * touched. NULL = no hook.
+    /* Hooks. NULL = no hook.
      *
      * on_write: command check. "Is this command allowed right now?"
      *   Synchronous; runs after perm and range checks, before the

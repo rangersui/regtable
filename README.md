@@ -65,7 +65,23 @@ Each adapter owns its transport, framing, and timing; the core table knows nothi
 
 The key insight: MCU hardware is already memory-mapped registers. PLC programming has been register-table-driven since 1979 (Modbus). ARM ships machine-readable register descriptions with every chip (CMSIS-SVD). regtable connects these existing pieces.
 
-## Quick start
+## Try it on the desktop
+
+No board needed. Your terminal is the UART.
+
+```bash
+make run          # Linux, macOS, Git Bash, or Windows cmd with make on PATH
+```
+
+```bat
+.\build run       # Windows cmd without make (needs gcc or clang on PATH)
+```
+
+Then type `help`, `list`, `set led true`, `get voltage`, `info pump`. The example, [example_desktop.c](example_desktop.c), is a tutorial: it walks through STEP 1 to 5 (state, hooks, table, transport, main loop) with `/* your ... here */` markers where you add your own. All three hooks are shown working. Everything you write there moves to the MCU as-is; only the transport functions change.
+
+`make test` (or `.\build test`) runs the regression suite in [regtable_test.c](regtable_test.c): 114 checks covering parsing, ranges, every type, all three hooks, deferred change tracking, and line editing. It's plain C with a capture transport, so it runs anywhere the library compiles.
+
+## Quick start on the MCU
 
 ```c
 #include "regtable_cli.h"
@@ -178,6 +194,10 @@ desc:   Sampling interval in ms
 
 **Use what the industry already ships.** ARM chips come with machine-readable register descriptions (CMSIS-SVD). SCADA systems already speak Modbus. regtable plugs into both as they are.
 
+## Atomicity
+
+Each `reg_set_raw` call is atomic at the register level: the value either fully updates or gets rejected, never half-written. But there is no multi-register transaction. If you update three PID parameters with three separate `set` calls, there is a window where some have the new value and others still have the old one. For most slow control loops this doesn't matter. If you need a group of values to take effect together, guard them in your own code (e.g. apply all three in `on_write`, or buffer them and swap in one step).
+
 ## Concurrency
 
 regtable takes no locks. If everything (adapters, `reg_poll`, and the code that touches your register variables) runs in one main loop or one RTOS task, you're done; skip this section.
@@ -245,7 +265,10 @@ regtable_core.h     Register entry struct, table handle, type/perm enums, raw co
 regtable_core.c     Lookup, typed raw get/set (validation), dirty tracking + reg_poll, string layer
 regtable_cli.h      CLI context struct
 regtable_cli.c      Non-blocking byte-fed CLI parser (get/set/info/list/help)
-test_desktop.c      Desktop test harness (gcc)
+example_desktop.c   Interactive desktop tutorial (STEP 1..5, all hooks demonstrated)
+regtable_test.c     Self-checking regression test, plain C
+Makefile            make / make run / make test / make clean
+build.bat           Same for Windows cmd without make
 ```
 
 ## Chip agnostic
