@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
+#include <ctype.h>
 
 /* -- helpers --------------------------------------------- */
 
@@ -260,9 +261,11 @@ int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size)
 
 static RegResult parse_unsigned(const char *s, uint32_t *out)
 {
-    /* strtoul accepts "-1" by wrapping; reject the sign up front */
+    /* strtoul accepts "-1" by wrapping; reject the sign up front.
+     * Skip the same whitespace strtoul skips (isspace), so a sign
+     * hiding behind \v or \f is caught too. */
     const char *p = s;
-    while (*p == ' ' || *p == '\t') p++;
+    while (isspace((unsigned char)*p)) p++;
     if (*p == '-') return REG_ERR_TYPE;
 
     char *end;

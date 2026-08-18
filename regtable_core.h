@@ -131,7 +131,13 @@ RegResult reg_get_raw(const RegEntry *entry, uint32_t *raw_out);
  *       set the bit.
  *
  *  Call reg_poll from your main loop, at whatever cadence you
- *  choose. Returns the number of hooks run. */
+ *  choose. Returns the number of hooks run.
+ *
+ *  Both sides touch the bitmap with plain read-modify-write, so
+ *  they belong in the same context: call reg_mark_dirty from the
+ *  main loop too. An ISR that produces a value should set its own
+ *  flag and let the main loop call reg_mark_dirty (README,
+ *  Concurrency). */
 void     reg_mark_dirty(RegTable *t, const RegEntry *entry);
 uint16_t reg_poll(RegTable *t);
 

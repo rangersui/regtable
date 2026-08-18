@@ -187,6 +187,10 @@ static void test_unsigned_range(void)
 
     /* U32 full range, no user range */
     EXPECT("set setpoint -1",         "ERR: invalid value\r\n"); CHECK(setpoint == 0);
+    /* a sign behind whitespace strtoul would skip: must be caught as
+     * a type error here, not left to the 64-bit-only ULONG_MAX guard */
+    EXPECT("set setpoint \v-1",       "ERR: invalid value\r\n"); CHECK(setpoint == 0);
+    EXPECT("set setpoint \f-1",       "ERR: invalid value\r\n"); CHECK(setpoint == 0);
     EXPECT("set setpoint 4294967295", "OK\r\n");                CHECK(setpoint == 0xFFFFFFFFu);
     EXPECT("get setpoint",            "4294967295\r\n");
     EXPECT("set setpoint 4294967296", "ERR: out of range\r\n");
