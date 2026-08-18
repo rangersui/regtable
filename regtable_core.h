@@ -146,7 +146,12 @@ uint16_t reg_poll(RegTable *t);
  *  Returns chars written (excl NUL), or -1 on error. */
 int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size);
 
-/*  reg_set_str: parse value_str per entry->type, then reg_set_raw. */
+/*  reg_set_str: parse value_str per entry->type, then reg_set_raw.
+ *  Integers: decimal or 0x hex, optional sign for signed types.
+ *  A leading zero is still decimal (no octal).
+ *  Floats: strtod syntax; nan is a type error, inf or a value too
+ *  large for float is a range error.
+ *  Bool: true/false in any case, or 1/0. */
 RegResult reg_set_str(RegTable *t, const RegEntry *entry, const char *value_str);
 
 /*  Human-readable result code. */

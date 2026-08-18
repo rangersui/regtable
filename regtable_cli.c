@@ -141,25 +141,30 @@ static void cli_error(RegCli *cli, const char *msg, bool json)
 
 /* -- tokeniser: splits the line in place, argv points into it -- */
 
-/* returns the token count, or -1 if the line holds more than max_args */
-static int cli_split(char *line, char **argv, int max_args)
+/* "--json" is an output-format flag, not an argument: it is taken
+ * out here, wherever it sits, and does not count toward max_args.
+ * Returns the token count, or -1 if the line holds more than max_args. */
+static int cli_split(char *line, char **argv, int max_args, bool *json)
 {
     int argc = 0;
+    bool too_many = false;
     char *p = line;
 
     for (;;) {
         /* skip leading spaces */
         while (*p == ' ' || *p == '\t') p++;
         if (*p == '\0') break;
-        if (argc == max_args) return -1;
 
-        argv[argc++] = p;
-
+        char *tok = p;
         /* find end of token */
         while (*p && *p != ' ' && *p != '\t') p++;
         if (*p) *p++ = '\0';
+
+        if (strcmp(tok, "--json") == 0) { *json = true; continue; }
+        if (argc == max_args) { too_many = true; continue; }   /* keep scanning for --json */
+        argv[argc++] = tok;
     }
-    return argc;
+    return too_many ? -1 : argc;
 }
 
 /* -- commands -------------------------------------------- */
@@ -292,25 +297,15 @@ static void cmd_help(RegCli *cli)
 static void cli_process(RegCli *cli, char *line)
 {
     char *argv[REGTABLE_CLI_MAX_ARGS];
-    int argc = cli_split(line, argv, REGTABLE_CLI_MAX_ARGS);
+    bool json = false;
+    int argc = cli_split(line, argv, REGTABLE_CLI_MAX_ARGS, &json);
 
     if (argc == 0) {
         return;
     }
     if (argc < 0) {
-        cli_error(cli, "ERR: too many arguments", false);
+        cli_error(cli, "ERR: too many arguments", json);
         return;
-    }
-
-    /* pull "--json" out of argv wherever it sits */
-    bool json = false;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--json") == 0) {
-            json = true;
-            for (int j = i; j < argc - 1; j++) argv[j] = argv[j + 1];
-            argc--;
-            break;
-        }
     }
 
     /* each command takes an exact number of arguments; anything

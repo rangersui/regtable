@@ -166,6 +166,9 @@ static void test_bool(void)
     EXPECT("set led 1",     "OK\r\n");   CHECK(led_state == 1);
     EXPECT("set led false", "OK\r\n");   CHECK(led_state == 0);
     EXPECT("set led maybe", "ERR: invalid value\r\n");
+    EXPECT("set led TRUE",  "OK\r\n");   CHECK(led_state == 1);
+    EXPECT("set led False", "OK\r\n");   CHECK(led_state == 0);
+    EXPECT("set led 2",     "ERR: invalid value\r\n");
     EXPECT("get led",       "false\r\n");
 }
 
@@ -194,6 +197,18 @@ static void test_unsigned_range(void)
     EXPECT("set setpoint 4294967296", "ERR: out of range\r\n");
     EXPECT("set setpoint 0x10",       "OK\r\n");
     EXPECT("get setpoint",            "16\r\n");
+    EXPECT("set setpoint 0X1f",       "OK\r\n");                CHECK(setpoint == 31);
+    EXPECT("set setpoint +7",         "OK\r\n");                CHECK(setpoint == 7);
+
+    /* decimal and 0x hex only: a leading zero is not octal */
+    EXPECT("set setpoint 010",        "OK\r\n");                CHECK(setpoint == 10);
+    EXPECT("set interval 0100",       "OK\r\n");                CHECK(interval == 100);
+    EXPECT("set setpoint 0x",         "ERR: invalid value\r\n");
+    EXPECT("set setpoint 0x-1",       "ERR: invalid value\r\n");
+    EXPECT("set setpoint 08",         "OK\r\n");                CHECK(setpoint == 8);
+    EXPECT("set setpoint 0xG",        "ERR: invalid value\r\n");
+    EXPECT("set setpoint 0x100000000","ERR: out of range\r\n");
+    run("set interval 500");
 }
 
 static void test_signed(void)
@@ -204,7 +219,27 @@ static void test_signed(void)
     EXPECT("set offset 51",   "ERR: out of range\r\n");
     EXPECT("set offset 40",   "OK\r\n");                CHECK(offset == 40);
     EXPECT("set offset abc",  "ERR: invalid value\r\n");
+    EXPECT("set offset -0x10","OK\r\n");                CHECK(offset == -16);
+    EXPECT("set offset +12",  "OK\r\n");                CHECK(offset == 12);
+    EXPECT("set offset -010", "OK\r\n");                CHECK(offset == -10);   /* not octal */
+    EXPECT("set offset --1",  "ERR: invalid value\r\n");
+    EXPECT("set offset -",    "ERR: invalid value\r\n");
     EXPECT("set offset 0",    "OK\r\n");                CHECK(offset == 0);
+
+    /* full I32 edges through the raw path's type domain: offset is
+     * I16 with a range, so use the parser result via a wide entry */
+    static int32_t wide = 0;
+    static const RegEntry reg2[] = {
+        { .name = "w", .ptr = &wide, .type = REG_I32, .perm = REG_RW },
+        { .name = NULL }
+    };
+    RegTable t2;
+    CHECK(reg_table_init(&t2, reg2) == REG_OK);
+    CHECK(reg_set_str(&t2, &reg2[0], "-2147483648") == REG_OK);   CHECK(wide == INT32_MIN);
+    CHECK(reg_set_str(&t2, &reg2[0], "2147483647")  == REG_OK);   CHECK(wide == INT32_MAX);
+    CHECK(reg_set_str(&t2, &reg2[0], "2147483648")  == REG_ERR_RANGE);
+    CHECK(reg_set_str(&t2, &reg2[0], "-2147483649") == REG_ERR_RANGE);
+    CHECK(reg_set_str(&t2, &reg2[0], "-0x80000000") == REG_OK);   CHECK(wide == INT32_MIN);
 }
 
 static void test_float(void)
@@ -219,8 +254,12 @@ static void test_float(void)
     /* NaN/Inf must not slip past the range check */
     EXPECT("set gain nan",   "ERR: invalid value\r\n");  CHECK(gain == 2.5f);
     EXPECT("set gain NaN",   "ERR: invalid value\r\n");
-    EXPECT("set gain inf",   "ERR: invalid value\r\n");
-    EXPECT("set gain -inf",  "ERR: invalid value\r\n");  CHECK(gain == 2.5f);
+    /* inf and values too big for a float are a range problem, not a
+     * type problem: the text is a valid number */
+    EXPECT("set gain inf",   "ERR: out of range\r\n");
+    EXPECT("set gain -inf",  "ERR: out of range\r\n");   CHECK(gain == 2.5f);
+    EXPECT("set gain 1e40",  "ERR: out of range\r\n");   CHECK(gain == 2.5f);
+    EXPECT("set gain 1e-50", "ERR: out of range\r\n");   /* underflows to 0, below 0.5 */
 
     /* same via the raw path (what Modbus/MQTT would hit) */
     const RegEntry *g = reg_find(&table, "gain");
@@ -538,8 +577,14 @@ static void test_arg_count(void)
     EXPECT("list extra",             "ERR: usage: list\r\n");
     EXPECT("help me",                "ERR: usage: help\r\n");
     EXPECT("set led --json",         "{\"error\":\"ERR: usage: set <name> <value>\"}\r\n");
-    EXPECT("set led 1 junk --json",  "ERR: too many arguments\r\n");   /* over MAX_ARGS */
+    /* --json is a flag, not an argument: it never counts toward
+     * MAX_ARGS and it is honoured wherever it sits, even after
+     * the overflow point */
+    EXPECT("set led 1 junk --json",  "{\"error\":\"ERR: usage: set <name> <value>\"}\r\n");
     EXPECT("a b c d e",              "ERR: too many arguments\r\n");
+    EXPECT("a b c d e --json",       "{\"error\":\"ERR: too many arguments\"}\r\n");
+    EXPECT("--json get led",         "{\"value\":true}\r\n");
+    EXPECT("--json",                 "");
     EXPECT("get led",                "true\r\n");                      /* still fine */
 }
 

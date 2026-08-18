@@ -259,6 +259,28 @@ int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size)
     return -1;
 }
 
+/* case-insensitive equality, for true/false */
+static bool str_ieq(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+/*  Integer text is decimal, or hex with a 0x/0X prefix. Nothing
+ *  else: strtol's base 0 would also read "010" as octal 8, which
+ *  is not what anyone typing into a terminal means. */
+static int int_base(const char *s, const char **digits)
+{
+    if ((s[0] == '0') && (s[1] == 'x' || s[1] == 'X')) {
+        *digits = s + 2;
+        return 16;
+    }
+    *digits = s;
+    return 10;
+}
+
 static RegResult parse_unsigned(const char *s, uint32_t *out)
 {
     /* strtoul accepts "-1" by wrapping; reject the sign up front.
@@ -267,11 +289,18 @@ static RegResult parse_unsigned(const char *s, uint32_t *out)
     const char *p = s;
     while (isspace((unsigned char)*p)) p++;
     if (*p == '-') return REG_ERR_TYPE;
+    if (*p == '+') p++;
+
+    const char *digits;
+    int base = int_base(p, &digits);
+    /* first char must be a digit: strtoul would otherwise skip
+     * whitespace or a sign hiding after the 0x prefix */
+    if (!isxdigit((unsigned char)*digits)) return REG_ERR_TYPE;
 
     char *end;
     errno = 0;
-    unsigned long v = strtoul(s, &end, 0);
-    if (end == s || *end != '\0') return REG_ERR_TYPE;
+    unsigned long v = strtoul(digits, &end, base);
+    if (*end != '\0') return REG_ERR_TYPE;
     if (errno == ERANGE) return REG_ERR_RANGE;
 #if ULONG_MAX > 0xFFFFFFFFUL
     if (v > 0xFFFFFFFFUL) return REG_ERR_RANGE;
@@ -282,15 +311,28 @@ static RegResult parse_unsigned(const char *s, uint32_t *out)
 
 static RegResult parse_signed(const char *s, uint32_t *out)
 {
+    const char *p = s;
+    while (isspace((unsigned char)*p)) p++;
+    bool neg = false;
+    if (*p == '-' || *p == '+') { neg = (*p == '-'); p++; }
+
+    const char *digits;
+    int base = int_base(p, &digits);
+    if (!isxdigit((unsigned char)*digits)) return REG_ERR_TYPE;
+
+    /* magnitude first, so "-2147483648" fits without overflow */
     char *end;
     errno = 0;
-    long v = strtol(s, &end, 0);
-    if (end == s || *end != '\0') return REG_ERR_TYPE;
+    unsigned long mag = strtoul(digits, &end, base);
+    if (*end != '\0') return REG_ERR_TYPE;
     if (errno == ERANGE) return REG_ERR_RANGE;
-#if LONG_MAX > 0x7FFFFFFFL
-    if (v < INT32_MIN || v > INT32_MAX) return REG_ERR_RANGE;
-#endif
-    *out = (uint32_t)(int32_t)v;
+    if (neg) {
+        if (mag > 0x80000000UL) return REG_ERR_RANGE;
+        *out = (uint32_t)(0u - (uint32_t)mag);
+    } else {
+        if (mag > 0x7FFFFFFFUL) return REG_ERR_RANGE;
+        *out = (uint32_t)mag;
+    }
     return REG_OK;
 }
 
@@ -301,9 +343,9 @@ RegResult reg_set_str(RegTable *t, const RegEntry *entry, const char *value_str)
 
     switch (entry->type) {
     case REG_BOOL:
-        if (strcmp(value_str, "true") == 0 || strcmp(value_str, "1") == 0) {
+        if (str_ieq(value_str, "true") || strcmp(value_str, "1") == 0) {
             raw = 1;
-        } else if (strcmp(value_str, "false") == 0 || strcmp(value_str, "0") == 0) {
+        } else if (str_ieq(value_str, "false") || strcmp(value_str, "0") == 0) {
             raw = 0;
         } else {
             return REG_ERR_TYPE;
@@ -326,8 +368,11 @@ RegResult reg_set_str(RegTable *t, const RegEntry *entry, const char *value_str)
 
     case REG_FLOAT: {
         char *end;
-        float f = (float)strtod(value_str, &end);
+        double d = strtod(value_str, &end);
         if (end == value_str || *end != '\0') return REG_ERR_TYPE;
+        if (isnan(d)) return REG_ERR_TYPE;         /* "nan" is not a value */
+        float f = (float)d;
+        if (isinf(f)) return REG_ERR_RANGE;        /* "inf", or 1e40: too big for float */
         memcpy(&raw, &f, 4);
         break;
     }
