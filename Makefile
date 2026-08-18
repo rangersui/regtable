@@ -26,17 +26,17 @@ endif
 RM := rm -f
 
 EXAMPLE = example$(EXE)
-TEST    = test$(EXE)
+TEST    = regtest$(EXE)
 
 .PHONY: all run test clean
 
 all: $(EXAMPLE) $(TEST)
 
 $(EXAMPLE): example_desktop.c $(LIB_SRC) $(LIB_HDR)
-	$(CC) $(CFLAGS) -o $@ example_desktop.c $(LIB_SRC)
+	$(CC) $(CFLAGS) -o $@ example_desktop.c $(LIB_SRC) -lm
 
 $(TEST): regtable_test.c $(LIB_SRC) $(LIB_HDR)
-	$(CC) $(CFLAGS) -o $@ regtable_test.c $(LIB_SRC)
+	$(CC) $(CFLAGS) -o $@ regtable_test.c $(LIB_SRC) -lm
 
 run: $(EXAMPLE)
 	./$(EXAMPLE)
