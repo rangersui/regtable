@@ -20,10 +20,14 @@ LIB_HDR  = regtable_core.h regtable_cli.h
 # Windows only differs in the .exe suffix. GNU make on Windows runs
 # recipes through sh when one is on PATH (Git for Windows provides
 # it), so rm works in cmd too. Without sh, use build.bat instead.
+# -lm only off Windows: there the math functions are in the CRT and
+# MSVC-target clang has no m.lib.
 ifeq ($(OS),Windows_NT)
-  EXE := .exe
+  EXE  := .exe
+  LIBM :=
 else
-  EXE :=
+  EXE  :=
+  LIBM := -lm
 endif
 RM := rm -f
 
@@ -40,10 +44,10 @@ strict:
 	$(MAKE) test CFLAGS="$(CFLAGS) -Werror"
 
 $(EXAMPLE): example_desktop.c $(LIB_SRC) $(LIB_HDR)
-	$(CC) $(CFLAGS) -o $@ example_desktop.c $(LIB_SRC) -lm
+	$(CC) $(CFLAGS) -o $@ example_desktop.c $(LIB_SRC) $(LIBM)
 
 $(TEST): regtable_test.c $(LIB_SRC) $(LIB_HDR)
-	$(CC) $(CFLAGS) -o $@ regtable_test.c $(LIB_SRC) -lm
+	$(CC) $(CFLAGS) -o $@ regtable_test.c $(LIB_SRC) $(LIBM)
 
 run: $(EXAMPLE)
 	./$(EXAMPLE)
@@ -59,7 +63,7 @@ FUZZ_TIME ?= 60
 
 fuzz: regtable_fuzz.c $(LIB_SRC) $(LIB_HDR)
 	clang -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \
-	    -o $(FUZZ) regtable_fuzz.c $(LIB_SRC)
+	    -o $(FUZZ) regtable_fuzz.c $(LIB_SRC) $(LIBM)
 	mkdir -p corpus
 	printf 'help\n'                      > corpus/help
 	printf 'list --json\n'               > corpus/list

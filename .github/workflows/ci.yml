@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # -Werror build + regression test on the three desktop platforms
+  strict:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cc: gcc
+          - os: ubuntu-latest
+            cc: clang
+          - os: macos-latest
+            cc: clang
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: make strict CC=${{ matrix.cc }}
+
+  # Windows cmd path: build.bat, no make
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - shell: cmd
+        run: |
+          set CC=clang
+          .\build strict
+
+  # ILP32: long is 32 bits, so the ULONG_MAX guards compile out and
+  # the parser must hold on its own (as it will on the MCU)
+  x86-32bit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - run: make strict CFLAGS="-std=c99 -Wall -Wextra -Wpedantic -O2 -m32"
+
+  # the library sources under the real target toolchain, compile only
+  cortex-m:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
+      - run: |
+          for cpu in cortex-m0 cortex-m4; do
+            arm-none-eabi-gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -Os \
+              -mcpu=$cpu -mthumb -ffunction-sections -fdata-sections \
+              -c regtable_core.c regtable_cli.c
+            arm-none-eabi-size regtable_core.o regtable_cli.o
+          done
+
+  # runtime checks: memory errors and undefined behaviour under the test
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -O1 -g \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -o regtest regtable_test.c regtable_core.c regtable_cli.c -lm
+          ./regtest
+
+  # coverage-guided search on the CLI byte path
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make fuzz FUZZ_TIME=90
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: |
+            crash-*
+            leak-*
+            timeout-*
+          if-no-files-found: ignore
