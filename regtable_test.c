@@ -454,7 +454,7 @@ static void test_json_escape(void)
 }
 
 /* a description longer than cli_print's 128-byte scratch buffer:
- * output must be truncated, never over-read */
+ * desc goes straight to the transport, so it comes out whole */
 static uint8_t long_desc_var = 1;
 static const char long_desc[] =
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -481,9 +481,8 @@ static void test_long_description(void)
     const char *d = strstr(cap, "desc:   ");
     CHECK(d != NULL);
     if (d) {
-        size_t line = strlen(d);              /* "desc:   " + text, no CRLF fits */
-        CHECK(line <= 127);                   /* clamped to scratch buffer */
-        CHECK(strncmp(d + 8, long_desc, line - 8) == 0);   /* prefix, no garbage */
+        CHECK(strstr(d, long_desc) != NULL);          /* full text, no truncation */
+        CHECK(strstr(d + 8 + strlen(long_desc), "\r\n") != NULL);
     }
 }
 

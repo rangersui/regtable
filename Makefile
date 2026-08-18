@@ -3,6 +3,7 @@
 #   make          build example and test
 #   make run      build and start the interactive example
 #   make test     build and run the regression test
+#   make strict   rebuild everything with -Werror and run the test
 #   make clean
 #
 # Works with GNU make on Linux, macOS, Git Bash, and Windows cmd
@@ -28,9 +29,14 @@ RM := rm -f
 EXAMPLE = example$(EXE)
 TEST    = regtest$(EXE)
 
-.PHONY: all run test clean
+.PHONY: all run test strict clean
 
 all: $(EXAMPLE) $(TEST)
+
+# warnings become errors; forces a full rebuild so nothing stale slips by
+strict:
+	$(MAKE) clean
+	$(MAKE) test CFLAGS="$(CFLAGS) -Werror"
 
 $(EXAMPLE): example_desktop.c $(LIB_SRC) $(LIB_HDR)
 	$(CC) $(CFLAGS) -o $@ example_desktop.c $(LIB_SRC) -lm

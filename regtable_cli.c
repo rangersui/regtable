@@ -239,7 +239,9 @@ static void cmd_info(RegCli *cli, const char *name, bool json)
     }
     cli_print(cli, "modbus: 0x%04X\r\n", e->modbus_addr);
     if (e->description) {
-        cli_print(cli, "desc:   %s\r\n", e->description);
+        cli_puts(cli, "desc:   ");
+        cli_puts(cli, e->description);
+        cli_puts(cli, "\r\n");
     }
 }
 
