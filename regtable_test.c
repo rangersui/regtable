@@ -26,6 +26,7 @@ static float    gain        = 1.0f;
 static uint8_t  pump        = 0;
 static uint8_t  small       = 5;
 static float    voltage     = 0.0f;
+static volatile uint32_t hwreg = 0;   /* stands in for a CMSIS peripheral register */
 
 static int led_changes    = 0;
 static int offset_changes = 0;
@@ -69,6 +70,7 @@ static const RegEntry registry[] = {
     { .name = "small",    .ptr = &small,       .type = REG_U8,    .perm = REG_RW },
     { .name = "voltage",  .ptr = &voltage,     .type = REG_FLOAT, .perm = REG_RO,
       .on_read = voltage_read },
+    { .name = "hwreg",    .ptr = &hwreg,       .type = REG_U32,   .perm = REG_RW },
     { .name = NULL }
 };
 
@@ -208,6 +210,18 @@ static void test_float(void)
     EXPECT("set gain 0.4",   "ERR: out of range\r\n");
     EXPECT("set gain x",     "ERR: invalid value\r\n");
     EXPECT("set gain 2.5",   "OK\r\n");
+
+    /* NaN/Inf must not slip past the range check */
+    EXPECT("set gain nan",   "ERR: invalid value\r\n");  CHECK(gain == 2.5f);
+    EXPECT("set gain NaN",   "ERR: invalid value\r\n");
+    EXPECT("set gain inf",   "ERR: invalid value\r\n");
+    EXPECT("set gain -inf",  "ERR: invalid value\r\n");  CHECK(gain == 2.5f);
+
+    /* same via the raw path (what Modbus/MQTT would hit) */
+    const RegEntry *g = reg_find(&table, "gain");
+    CHECK(reg_set_raw(&table, g, 0x7FC00000u) == REG_ERR_TYPE);   /* quiet NaN */
+    CHECK(reg_set_raw(&table, g, 0x7F800000u) == REG_ERR_TYPE);   /* +Inf */
+    CHECK(gain == 2.5f);
 }
 
 static void test_on_write_veto(void)
@@ -308,6 +322,13 @@ static void test_raw_api(void)
     float f = 1.5f; uint32_t bits; memcpy(&bits, &f, 4);
     CHECK(reg_set_raw(&table, g, bits) == REG_OK);
     CHECK(gain == 1.5f);
+
+    /* entry pointing at a volatile (hardware-style) register */
+    const RegEntry *h = reg_find(&table, "hwreg");
+    CHECK(reg_set_raw(&table, h, 0xDEADBEEFu) == REG_OK);
+    CHECK(hwreg == 0xDEADBEEFu);
+    CHECK(reg_get_raw(h, &v) == REG_OK && v == 0xDEADBEEFu);
+    reg_poll(&table);
 }
 
 static void test_list_and_info(void)
@@ -344,6 +365,40 @@ static void test_line_editing(void)
     reg_poll(&table);
 }
 
+/* a description longer than cli_print's 128-byte scratch buffer:
+ * output must be truncated, never over-read */
+static uint8_t long_desc_var = 1;
+static const char long_desc[] =
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    "0123456789abcdef0123456789abcdef";   /* 160 chars */
+
+static void test_long_description(void)
+{
+    static const RegEntry reg2[] = {
+        { .name = "big", .ptr = &long_desc_var, .type = REG_U8, .perm = REG_RO,
+          .description = long_desc },
+        { .name = NULL }
+    };
+    RegTable t2;
+    RegCli   c2;
+    RegTransport tx = { .read = cap_read, .write = cap_write };
+    CHECK(reg_table_init(&t2, reg2) == REG_OK);
+    regcli_init(&c2, &t2, tx);
+    c2.echo = false;
+
+    cap_len = 0; cap[0] = '\0';
+    for (const char *p = "info big\n"; *p; p++) regcli_feed(&c2, (uint8_t)*p);
+
+    const char *d = strstr(cap, "desc:   ");
+    CHECK(d != NULL);
+    if (d) {
+        size_t line = strlen(d);              /* "desc:   " + text, no CRLF fits */
+        CHECK(line <= 127);                   /* clamped to scratch buffer */
+        CHECK(strncmp(d + 8, long_desc, line - 8) == 0);   /* prefix, no garbage */
+    }
+}
+
 static void test_overflow_line(void)
 {
     /* a line longer than the buffer is truncated, not overrun */
@@ -365,7 +420,7 @@ int main(void)
         printf("FAIL reg_table_init\n");
         return 1;
     }
-    CHECK(table.count == 10);
+    CHECK(table.count == 11);
 
     regcli_init(&cli, &table, tx);
     cli.echo = false;
@@ -382,6 +437,7 @@ int main(void)
     test_raw_api();
     test_list_and_info();
     test_line_editing();
+    test_long_description();
     test_overflow_line();
 
     if (failures) {

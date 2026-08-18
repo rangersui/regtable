@@ -55,7 +55,7 @@ typedef union RegLimit {
  */
 typedef struct RegEntry {
     const char *name;           /* CLI / MCP identifier          */
-    void       *ptr;            /* -> user variable or HW reg     */
+    volatile void *ptr;         /* -> user variable or HW reg     */
     RegType     type;
     RegPerm     perm;
     uint16_t    modbus_addr;    /* Modbus holding register addr  */

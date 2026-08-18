@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 
 /* -- helpers --------------------------------------------- */
 
@@ -46,19 +47,26 @@ static bool is_signed(RegType t)
     return t == REG_I8 || t == REG_I16 || t == REG_I32;
 }
 
-/* Current value of *ptr as raw, no hooks. */
+/* Current value of *ptr as raw, no hooks.
+ * Accesses go through volatile so an entry may point straight at a
+ * hardware register (GPIO ODR, ADC DR): every read really reads,
+ * every write really writes. */
 static uint32_t load_raw(const RegEntry *entry)
 {
     uint32_t raw = 0;
     switch (entry->type) {
-    case REG_U8:   raw = *(uint8_t  *)entry->ptr; break;
-    case REG_U16:  raw = *(uint16_t *)entry->ptr; break;
-    case REG_U32:  raw = *(uint32_t *)entry->ptr; break;
-    case REG_I8:   raw = (uint32_t)(int32_t)*(int8_t  *)entry->ptr; break;
-    case REG_I16:  raw = (uint32_t)(int32_t)*(int16_t *)entry->ptr; break;
-    case REG_I32:  raw = (uint32_t)*(int32_t *)entry->ptr; break;
-    case REG_BOOL: raw = *(uint8_t  *)entry->ptr ? 1 : 0; break;
-    case REG_FLOAT: memcpy(&raw, entry->ptr, 4); break;
+    case REG_U8:   raw = *(volatile uint8_t  *)entry->ptr; break;
+    case REG_U16:  raw = *(volatile uint16_t *)entry->ptr; break;
+    case REG_U32:  raw = *(volatile uint32_t *)entry->ptr; break;
+    case REG_I8:   raw = (uint32_t)(int32_t)*(volatile int8_t  *)entry->ptr; break;
+    case REG_I16:  raw = (uint32_t)(int32_t)*(volatile int16_t *)entry->ptr; break;
+    case REG_I32:  raw = (uint32_t)*(volatile int32_t *)entry->ptr; break;
+    case REG_BOOL: raw = *(volatile uint8_t  *)entry->ptr ? 1 : 0; break;
+    case REG_FLOAT: {
+        float f = *(volatile float *)entry->ptr;
+        memcpy(&raw, &f, 4);
+        break;
+    }
     }
     return raw;
 }
@@ -66,14 +74,19 @@ static uint32_t load_raw(const RegEntry *entry)
 static void store_raw(const RegEntry *entry, uint32_t raw)
 {
     switch (entry->type) {
-    case REG_U8:   *(uint8_t  *)entry->ptr = (uint8_t)raw;   break;
-    case REG_U16:  *(uint16_t *)entry->ptr = (uint16_t)raw;  break;
-    case REG_U32:  *(uint32_t *)entry->ptr = raw;            break;
-    case REG_I8:   *(int8_t   *)entry->ptr = (int8_t)(int32_t)raw;  break;
-    case REG_I16:  *(int16_t  *)entry->ptr = (int16_t)(int32_t)raw; break;
-    case REG_I32:  *(int32_t  *)entry->ptr = (int32_t)raw;   break;
-    case REG_BOOL: *(uint8_t  *)entry->ptr = (uint8_t)raw;   break;
-    case REG_FLOAT: memcpy(entry->ptr, &raw, 4);             break;
+    case REG_U8:   *(volatile uint8_t  *)entry->ptr = (uint8_t)raw;   break;
+    case REG_U16:  *(volatile uint16_t *)entry->ptr = (uint16_t)raw;  break;
+    case REG_U32:  *(volatile uint32_t *)entry->ptr = raw;            break;
+    case REG_I8:   *(volatile int8_t   *)entry->ptr = (int8_t)(int32_t)raw;  break;
+    case REG_I16:  *(volatile int16_t  *)entry->ptr = (int16_t)(int32_t)raw; break;
+    case REG_I32:  *(volatile int32_t  *)entry->ptr = (int32_t)raw;   break;
+    case REG_BOOL: *(volatile uint8_t  *)entry->ptr = (uint8_t)raw;   break;
+    case REG_FLOAT: {
+        float f;
+        memcpy(&f, &raw, 4);
+        *(volatile float *)entry->ptr = f;
+        break;
+    }
     }
 }
 
@@ -111,7 +124,13 @@ const RegEntry *reg_find(const RegTable *t, const char *name)
 void reg_mark_dirty(RegTable *t, const RegEntry *entry)
 {
     if (!t || !t->entries) return;
-    if (entry < t->entries || entry >= t->entries + t->count) return;
+
+    /* compare as integers: relational compare of pointers into
+     * different objects is undefined in C */
+    uintptr_t lo = (uintptr_t)t->entries;
+    uintptr_t hi = (uintptr_t)(t->entries + t->count);
+    uintptr_t p  = (uintptr_t)entry;
+    if (p < lo || p >= hi) return;
 
     uint16_t idx = (uint16_t)(entry - t->entries);
     t->dirty[idx / 32] |= (uint32_t)1 << (idx % 32);
@@ -162,6 +181,14 @@ RegResult reg_set_raw(RegTable *t, const RegEntry *entry, uint32_t raw)
     case REG_BOOL:
         raw = raw ? 1 : 0;
         break;
+    case REG_FLOAT: {
+        /* NaN compares false against everything, so it would slip
+         * through the range check; Inf is never a sane setpoint */
+        float f;
+        memcpy(&f, &raw, 4);
+        if (isnan(f) || isinf(f)) return REG_ERR_TYPE;
+        break;
+    }
     default:
         break;
     }

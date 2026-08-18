@@ -17,9 +17,10 @@ static void cli_print(RegCli *cli, const char *fmt, ...)
     va_start(ap, fmt);
     int n = vsnprintf(tmp, sizeof(tmp), fmt, ap);
     va_end(ap);
-    if (n > 0) {
-        cli->tx.write((const uint8_t *)tmp, (uint16_t)n);
-    }
+    if (n <= 0) return;
+    /* vsnprintf returns the length it wanted, not what fit */
+    if ((size_t)n >= sizeof(tmp)) n = (int)sizeof(tmp) - 1;
+    cli->tx.write((const uint8_t *)tmp, (uint16_t)n);
 }
 
 /* -- tokeniser: splits the line in place, argv points into it -- */
