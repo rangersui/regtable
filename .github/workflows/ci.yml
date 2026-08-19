@@ -50,9 +50,19 @@ jobs:
           for cpu in cortex-m0 cortex-m4; do
             arm-none-eabi-gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -Os \
               -mcpu=$cpu -mthumb -ffunction-sections -fdata-sections \
-              -c regtable_core.c regtable_cli.c
+              -Isrc -c src/regtable_core.c src/regtable_cli.c
             arm-none-eabi-size regtable_core.o regtable_cli.o
           done
+
+  # the Arduino example, built the way the IDE builds it: repo as a
+  # library (src/ + library.properties), sketch is C++, core is avr-gcc
+  arduino:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - run: arduino-cli core update-index && arduino-cli core install arduino:avr
+      - run: arduino-cli compile --fqbn arduino:avr:uno --library . --warnings all examples/arduino
 
   # runtime checks: memory errors and undefined behaviour under the test
   sanitizers:
@@ -62,7 +72,7 @@ jobs:
       - run: |
           gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -O1 -g \
             -fsanitize=address,undefined -fno-sanitize-recover=all \
-            -o regtest regtable_test.c regtable_core.c regtable_cli.c -lm
+            -Isrc -o regtest regtable_test.c src/regtable_core.c src/regtable_cli.c -lm
           ./regtest
 
   # coverage-guided search on the CLI byte path

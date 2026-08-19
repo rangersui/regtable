@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* -- configuration --------------------------------------- */
 #ifndef REGTABLE_MAX_ENTRIES
 #define REGTABLE_MAX_ENTRIES 64     /* sizes the dirty bitmap */
@@ -159,5 +163,9 @@ const char *reg_result_str(RegResult r);
 
 /*  Human-readable type name. */
 const char *reg_type_str(RegType t);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* REGTABLE_CORE_H */

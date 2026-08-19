@@ -3,6 +3,11 @@
 
 #include "regtable_core.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 /* -- configuration --------------------------------------- */
 #ifndef REGTABLE_CLI_BUF_SIZE
 #define REGTABLE_CLI_BUF_SIZE 128
@@ -33,5 +38,9 @@ void regcli_init(RegCli *cli, RegTable *table, RegTransport tx);
  *  ending; on '\n' or '\r' the line is parsed and executed,
  *  so hooks run in the caller's context. Call from the main loop. */
 void regcli_feed(RegCli *cli, uint8_t byte);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* REGTABLE_CLI_H */

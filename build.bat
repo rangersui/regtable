@@ -11,8 +11,8 @@ rem Needs gcc (or clang: set CC=clang) on PATH.
 
 setlocal
 if "%CC%"=="" set CC=gcc
-set CFLAGS=-std=c99 -Wall -Wextra -Wpedantic -O2
-set LIB=regtable_core.c regtable_cli.c
+set CFLAGS=-std=c99 -Wall -Wextra -Wpedantic -O2 -Isrc
+set LIB=src/regtable_core.c src/regtable_cli.c
 if "%1"=="strict" set CFLAGS=%CFLAGS% -Werror
 
 if "%1"=="clean" (

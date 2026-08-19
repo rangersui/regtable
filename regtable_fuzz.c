@@ -6,8 +6,9 @@
  * some byte sequence (over-read, bad cast, unbounded loop) shows up
  * as a crash with a stack trace and a reproducer file.
  *
- *   clang -g -O1 -fsanitize=fuzzer,address,undefined \
- *         -o fuzz regtable_fuzz.c regtable_core.c regtable_cli.c -lm
+ *   make fuzz            (or by hand:)
+ *   clang -g -O1 -Isrc -fsanitize=fuzzer,address,undefined \
+ *         -o fuzz regtable_fuzz.c src/regtable_core.c src/regtable_cli.c
  *   mkdir -p corpus && ./fuzz corpus -max_len=256
  *
  * The regression test asserts what the CLI must do with inputs we

@@ -13,9 +13,11 @@
 
 CC      ?= gcc
 CFLAGS  ?= -std=c99 -Wall -Wextra -Wpedantic -O2
+# override: -Isrc stays even when CFLAGS=... is given on the command line
+override CFLAGS += -Isrc
 
-LIB_SRC  = regtable_core.c regtable_cli.c
-LIB_HDR  = regtable_core.h regtable_cli.h
+LIB_SRC  = src/regtable_core.c src/regtable_cli.c
+LIB_HDR  = src/regtable_core.h src/regtable_cli.h
 
 # Windows only differs in the .exe suffix. GNU make on Windows runs
 # recipes through sh when one is on PATH (Git for Windows provides
@@ -62,7 +64,7 @@ FUZZ      = fuzz$(EXE)
 FUZZ_TIME ?= 60
 
 fuzz: regtable_fuzz.c $(LIB_SRC) $(LIB_HDR)
-	clang -g -O1 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \
+	clang -g -O1 -Isrc -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \
 	    -o $(FUZZ) regtable_fuzz.c $(LIB_SRC) $(LIBM)
 	mkdir -p corpus
 	printf 'help\n'                      > corpus/help
