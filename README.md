@@ -73,6 +73,12 @@ Then type `help`, `list`, `set led true`, `get voltage`, `info pump`. The exampl
 
 `make test` (or `.\build test`) runs the regression suite in [regtable_test.c](regtable_test.c). It is plain C with a capture transport, so it runs anywhere the library compiles. `make strict` is the same with `-Werror`.
 
+## Try it on an Arduino
+
+The repo is laid out as an Arduino library (`library.properties`, `src/`, `examples/`). Clone or unzip it into `Documents/Arduino/libraries/regtable/`, then File > Examples > regtable > arduino. That sketch, [examples/arduino/arduino.ino](examples/arduino/arduino.ino), exposes the built-in LED, analog pin A0, and `millis()` on an Uno over the USB serial port; open Serial Monitor at 115200 with "Newline" line ending and type `list`.
+
+On AVR (Uno, Nano, Mega) `printf` has no float support unless the sketch is linked with `-lprintf_flt`, so FLOAT registers print as `?` there; integer and BOOL registers work as-is. On 32-bit Arduino boards (SAMD, RP2040, ESP32) FLOAT works. AVR also keeps `const` data in RAM (regtable does not use PROGMEM), so the table costs a few dozen bytes per entry there.
+
 ## Quick start on the MCU
 
 ```c
