@@ -4,6 +4,7 @@
 #   make run      build and start the interactive example
 #   make test     build and run the regression test
 #   make run-tcp  build and start the desktop Modbus TCP slave example
+#   make run-mqtt build and start the desktop MQTT demo (stdout broker)
 #   make strict   rebuild everything with -Werror and run the test
 #   make fuzz     libFuzzer + ASan/UBSan on the CLI byte path (needs clang)
 #   make fuzz-mb  same, on the Modbus RTU frame path
@@ -18,8 +19,8 @@ CFLAGS  ?= -std=c99 -Wall -Wextra -Wpedantic -O2
 # override: -Isrc stays even when CFLAGS=... is given on the command line
 override CFLAGS += -Isrc
 
-LIB_SRC  = src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c
-LIB_HDR  = src/regtable_core.h src/regtable_cli.h src/regtable_modbus.h
+LIB_SRC  = src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c src/regtable_mqtt.c
+LIB_HDR  = src/regtable_core.h src/regtable_cli.h src/regtable_modbus.h src/regtable_mqtt.h
 
 # Windows only differs in the .exe suffix. GNU make on Windows runs
 # recipes through sh when one is on PATH (Git for Windows provides
@@ -39,12 +40,14 @@ RM := rm -f
 
 EXAMPLE = example$(EXE)
 TCPSLAVE = tcpslave$(EXE)
+MQTTDEMO = mqttdemo$(EXE)
 TEST    = regtest$(EXE)
 MBTEST  = mbtest$(EXE)
+MQTEST  = mqtest$(EXE)
 
-.PHONY: all run run-tcp test strict fuzz fuzz-mb clean
+.PHONY: all run run-tcp run-mqtt test strict fuzz fuzz-mb clean
 
-all: $(EXAMPLE) $(TEST) $(MBTEST) $(TCPSLAVE)
+all: $(EXAMPLE) $(TEST) $(MBTEST) $(MQTEST) $(TCPSLAVE) $(MQTTDEMO)
 
 # warnings become errors; forces a full rebuild of everything (examples
 # included) so nothing stale or unbuilt slips by
@@ -62,6 +65,9 @@ $(TEST): regtable_test.c $(LIB_SRC) $(LIB_HDR)
 $(MBTEST): regtable_modbus_test.c $(LIB_SRC) $(LIB_HDR)
 	$(CC) $(CFLAGS) -o $@ regtable_modbus_test.c $(LIB_SRC) $(LIBM)
 
+$(MQTEST): regtable_mqtt_test.c $(LIB_SRC) $(LIB_HDR)
+	$(CC) $(CFLAGS) -o $@ regtable_mqtt_test.c $(LIB_SRC) $(LIBM)
+
 run: $(EXAMPLE)
 	./$(EXAMPLE)
 
@@ -71,9 +77,16 @@ run-tcp: $(TCPSLAVE)
 $(TCPSLAVE): example_modbus_tcp.c $(LIB_SRC) $(LIB_HDR)
 	$(CC) $(CFLAGS) -o $@ example_modbus_tcp.c $(LIB_SRC) $(LIBM) $(LIBNET)
 
-test: $(TEST) $(MBTEST)
+run-mqtt: $(MQTTDEMO)
+	./$(MQTTDEMO)
+
+$(MQTTDEMO): example_mqtt_desktop.c $(LIB_SRC) $(LIB_HDR)
+	$(CC) $(CFLAGS) -o $@ example_mqtt_desktop.c $(LIB_SRC) $(LIBM)
+
+test: $(TEST) $(MBTEST) $(MQTEST)
 	./$(TEST)
 	./$(MBTEST)
+	./$(MQTEST)
 
 # Coverage-guided search for inputs the regression test did not think
 # of. Seeds a corpus with a few valid lines, then runs for FUZZ_TIME
@@ -103,5 +116,5 @@ fuzz-mb: regtable_modbus_fuzz.c $(LIB_SRC) $(LIB_HDR)
 	./$(FUZZMB) corpus_mb -max_len=260 -max_total_time=$(FUZZ_TIME)
 
 clean:
-	-$(RM) $(EXAMPLE) $(TEST) $(MBTEST) $(TCPSLAVE) $(FUZZ) $(FUZZMB) fuzz.lib fuzz.exp fuzz.pdb fuzz_mb.lib fuzz_mb.exp fuzz_mb.pdb
+	-$(RM) $(EXAMPLE) $(TEST) $(MBTEST) $(MQTEST) $(TCPSLAVE) $(MQTTDEMO) $(FUZZ) $(FUZZMB) fuzz.lib fuzz.exp fuzz.pdb fuzz_mb.lib fuzz_mb.exp fuzz_mb.pdb
 	-$(RM) -r corpus corpus_mb crash-* leak-* timeout-*

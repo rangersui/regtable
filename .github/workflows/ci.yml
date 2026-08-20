@@ -50,8 +50,8 @@ jobs:
           for cpu in cortex-m0 cortex-m4; do
             arm-none-eabi-gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -Os \
               -mcpu=$cpu -mthumb -ffunction-sections -fdata-sections \
-              -Isrc -c src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c
-            arm-none-eabi-size regtable_core.o regtable_cli.o regtable_modbus.o
+              -Isrc -c src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c src/regtable_mqtt.c
+            arm-none-eabi-size regtable_core.o regtable_cli.o regtable_modbus.o regtable_mqtt.o
           done
 
   # the Arduino example, built the way the IDE builds it: repo as a
@@ -62,10 +62,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: arduino/setup-arduino-cli@v2
       - run: arduino-cli core update-index && arduino-cli core install arduino:avr
-      - run: arduino-cli lib install Ethernet
+      - run: arduino-cli lib install Ethernet PubSubClient
       - run: arduino-cli compile --fqbn arduino:avr:uno --library . --warnings all examples/arduino
       - run: arduino-cli compile --fqbn arduino:avr:uno --library . --warnings all examples/arduino_modbus
       - run: arduino-cli compile --fqbn arduino:avr:uno --library . --warnings all examples/arduino_modbus_tcp
+      - run: arduino-cli compile --fqbn arduino:avr:uno --library . --warnings all examples/arduino_mqtt
 
   # runtime checks: memory errors and undefined behaviour under the test
   sanitizers:
@@ -81,6 +82,10 @@ jobs:
             -fsanitize=address,undefined -fno-sanitize-recover=all \
             -Isrc -o mbtest regtable_modbus_test.c src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c -lm
           ./mbtest
+          gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -O1 -g \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Isrc -o mqtest regtable_mqtt_test.c src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c src/regtable_mqtt.c -lm
+          ./mqtest
 
   # coverage-guided search on the CLI byte path
   fuzz:

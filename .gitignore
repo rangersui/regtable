@@ -24,3 +24,7 @@ fuzz_mb.pdb
 corpus_mb/
 tcpslave
 tcpslave.exe
+mqtest
+mqtest.exe
+mqttdemo
+mqttdemo.exe

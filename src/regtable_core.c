@@ -232,11 +232,8 @@ RegResult reg_get_raw(const RegEntry *entry, uint32_t *raw_out)
 
 /* -- string layer: parse / format, then delegate to raw path -- */
 
-int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size)
+int reg_raw_str(const RegEntry *entry, uint32_t raw, char *buf, uint16_t buf_size)
 {
-    uint32_t raw;
-    reg_get_raw(entry, &raw);
-
     switch (entry->type) {
     case REG_U8:
     case REG_U16:
@@ -257,6 +254,13 @@ int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size)
         return snprintf(buf, buf_size, "%s", raw ? "true" : "false");
     }
     return -1;
+}
+
+int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size)
+{
+    uint32_t raw;
+    reg_get_raw(entry, &raw);
+    return reg_raw_str(entry, raw, buf, buf_size);
 }
 
 /* case-insensitive equality, for true/false */

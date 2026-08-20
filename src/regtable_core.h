@@ -147,9 +147,13 @@ void     reg_mark_dirty(RegTable *t, const RegEntry *entry);
 uint16_t reg_poll(RegTable *t);
 
 /*  String layer over the raw path (what the CLI uses).
- *  reg_get_str: format the current value into buf.
+ *  reg_get_str: format the current value into buf (runs on_read).
+ *  reg_raw_str: format a raw value already in hand, touching
+ *  neither the variable nor the hooks; what reg_get_str uses
+ *  after its fetch.
  *  Returns chars written (excl NUL), or -1 on error. */
 int reg_get_str(const RegEntry *entry, char *buf, uint16_t buf_size);
+int reg_raw_str(const RegEntry *entry, uint32_t raw, char *buf, uint16_t buf_size);
 
 /*  reg_set_str: parse value_str per entry->type, then reg_set_raw.
  *  Integers: decimal or 0x hex, optional sign for signed types.

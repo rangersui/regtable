@@ -8,7 +8,7 @@ A table of named registers (C variables plus selected hardware peripherals) is e
 
 - **Serial CLI** `get temp`, `set led true`, `info interval`, `list`, all with `--json`
 - **Modbus RTU / TCP** any SCADA / HMI / PLC master can read/write
-- **MQTT** publish state, subscribe to commands (planned)
+- **MQTT** publish state, subscribe to commands
 - **MCP** AI agents operate the device (planned)
 - **Web UI** browser connects via Web Serial / Web Bluetooth (planned)
 
@@ -39,8 +39,8 @@ Two layers on the device, plus host-side projections generated from the same sou
                ┌─────────────────┼─────────────────┐
                ▼                 ▼                 ▼
          CLI adapter       Modbus adapter     MQTT adapter      ← on device
-         (UART/USB/BLE     (RTU framing,      (broker session,
-          byte stream)      3.5-char idle)     pub/sub)
+         (UART/USB/BLE     (RTU/TCP framing,  (topics/payloads;
+          byte stream)      CRC, exceptions)   client owns session)
                │                 │                 │
                ▼                 ▼                 ▼
              human           SCADA / PLC         cloud
@@ -210,6 +210,37 @@ Frame boundary detection (the t3.5 silence) belongs to platform code: a UART idl
 For Modbus TCP, `regmb_process_tcp` takes one ADU (the 7-byte MBAP header plus the PDU, read off the stream using the header's length field), echoes the transaction and unit identifiers, and answers on the same map. There is no CRC and no broadcast on TCP; an ADU the messaging guide says to discard (wrong protocol id, disagreeing length) returns 0. [example_modbus_tcp.c](example_modbus_tcp.c) is a desktop slave on 127.0.0.1:1502: `make run-tcp` (or `.\build tcpslave`, then `.\tcpslave`), then point QModMaster (TCP mode) or pymodbus at it, no board or serial port involved.
 
 `list --json` on the CLI shows each entry's `modbus` address, so a host can discover the register map from the device itself.
+
+## MQTT
+
+The MQTT adapter is a projection: topics and payloads in, topics and payloads out. The MQTT protocol itself (connect, keepalive, QoS, reconnect) belongs to an MQTT client library in platform code, the way the UART belongs to the HAL.
+
+```c
+#include "regtable_mqtt.h"
+
+static int my_publish(const char *topic, const char *payload,
+                      bool retain, void *user) {
+    return mqtt_client_publish(topic, payload, retain) ? 0 : -1;
+}
+
+RegMqtt mq;
+regmqtt_init(&mq, &table, "boiler", my_publish, NULL);
+regmqtt_publish_all(&mq);            /* after (re)connect: full state */
+
+/* main loop, at telemetry cadence: */
+regmqtt_poll(&mq);                   /* publishes whatever changed */
+
+/* from the client's message callback (subscribed to boiler/+/set): */
+regmqtt_handle(&mq, topic, payload); /* returns the RegResult */
+```
+
+Topics are `boiler/temp` for state (retained, payload is the register's text form) and `boiler/temp/set` for commands. A set travels the same `reg_set_raw` path as every adapter; a refusal answers by silence on the state topic, so subscribers see the old value still standing.
+
+A `/set` is a one-shot command and is published with the retain flag clear: a retained `/set` would be replayed by the broker on every new subscription, re-executing the command after each reconnect. Persisting a desired value for an offline device is the broker or cloud layer's job (a device shadow service). Register names become topic levels, so `regmqtt_init` rejects names with `/`, `+`, or `#` and names longer than 31 characters; the prefix may span multiple levels (`plant/boiler`) but carries no wildcards.
+
+Change detection is a shadow array: the raw value last accepted by `publish()`, one per entry. The pair works like a transactional outbox with the difference as the pending entry: `publish()` returning non-zero leaves the shadow alone and the next poll retries, payloads are absolute values so repeats are harmless, and `regmqtt_publish_all` after a reconnect resends everything. The dirty bitmap and `on_change` stay the application's; the adapter compares values instead, so both consumers see every write without stealing from each other. A change that reverts between two polls publishes nothing: `on_change` answers "did something happen", the shadow answers "is the net value out of sync".
+
+[example_mqtt_desktop.c](example_mqtt_desktop.c) shows the pipeline with stdout standing in for the broker (`make run-mqtt`); [examples/arduino_mqtt/arduino_mqtt.ino](examples/arduino_mqtt/arduino_mqtt.ino) is the real-client integration with PubSubClient, an Ethernet shield, and a last-will `status` topic (compile-verified, like the Arduino TCP sketch).
 
 ## Atomicity
 
