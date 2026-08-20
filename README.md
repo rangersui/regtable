@@ -343,15 +343,6 @@ Three side-effect points on the access path. The core moves data; hooks are wher
 
 **`on_change` is telemetry.** The value changed and something outside needs to hear about it: publish it over MQTT, log it, refresh a display, light an LED that follows a switch. It is deferred: the write only sets a dirty bit, and `reg_poll()` runs the hooks later from the main loop in table order. By the time it runs the value is already stored, so it can report but not refuse. When application code changes a variable directly, `reg_mark_dirty()` puts it in the same queue.
 
-## Design decisions (settled)
-
-- **Signed types.** `I8` / `I16` / `I32` are in the enum; raw convention is sign-extension to 32 bits.
-- **Range metadata.** `min` / `max` are a `RegLimit` union (`.u` / `.i` / `.f`), read through the member matching the entry's type. Full U32 range and fractional FLOAT ranges are expressible; entry size unchanged.
-- **Change notification.** Dirty bitmap in the `RegTable` handle (RAM), entries stay `const` in flash. `REGTABLE_MAX_ENTRIES` (default 64) sizes the bitmap.
-- **Modbus float word order.** A device speaks one convention, so ABCD/CDAB is a Modbus adapter parameter, not a per-entry field.
-
-`RegEntry` is considered stable from here; adapters and codegen can build on it.
-
 ## Resource use
 
 - No dynamic allocation. Dependencies: C99 standard library only.

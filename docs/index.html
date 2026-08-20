@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>regtable — one register table, many interfaces</title>
+<meta name="description" content="Expose any MCU's state the way a PLC exposes its registers: one register table, reachable over CLI, Modbus RTU/TCP, MQTT, and a Web Serial panel. Pure C99, no allocation.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&display=swap">
+<style>
+:root {
+  --ground: #ECEEF0;
+  --surface: #FFFFFF;
+  --surface-raised: #F5F6F7;
+  --text: #1A1D21;
+  --text-muted: #5E6470;
+  --border: #CDD1D6;
+  --border-faint: #DFE2E6;
+  --accent: #B87514;
+  --accent-hover: #9A6210;
+  --accent-bg: #FDF5E8;
+  --console-bg: #1C1F25;
+  --console-text: #C8CCD2;
+  --console-prompt: #B87514;
+  --console-dim: #6A6F78;
+  --mono: "SFMono-Regular", "Cascadia Code", "Consolas", "Liberation Mono", monospace;
+  --serif: "Source Serif 4", "Georgia", "Times New Roman", serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #131519;
+    --surface: #1C1F25;
+    --surface-raised: #24282E;
+    --text: #CBCDD2;
+    --text-muted: #7D8189;
+    --border: #363A42;
+    --border-faint: #2A2E34;
+    --accent: #D4901A;
+    --accent-hover: #E9A530;
+    --accent-bg: #2C2418;
+    --console-bg: #0E1014;
+    --console-text: #A0A4AA;
+    --console-prompt: #D4901A;
+    --console-dim: #555960;
+  }
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--serif);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--ground);
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); text-decoration: underline; }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-faint);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+/* -- hero -------------------------------------------------- */
+
+.hero { padding: 84px 0 48px; }
+
+.hero h1 {
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
+}
+
+.hero h1 .dev { font-weight: 300; color: var(--text-muted); }
+
+.hero p.tag {
+  font-size: 20px;
+  color: var(--text-muted);
+  margin: 14px 0 26px;
+}
+
+.hero .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+
+.btn {
+  display: inline-block;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 9px 20px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.btn:hover { border-color: var(--accent); text-decoration: none; }
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn.primary:hover { background: var(--accent-hover); color: #fff; }
+
+/* -- terminal ---------------------------------------------- */
+
+.term {
+  background: var(--console-bg);
+  border-radius: 8px;
+  padding: 22px 26px;
+  white-space: pre;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--console-text);
+  overflow-x: auto;
+  margin: 36px 0 8px;
+  min-height: 275px;
+}
+
+.term .p { color: var(--console-prompt); }
+.term .d { color: var(--console-dim); }
+.term .cursor {
+  display: inline-block;
+  width: 8px; height: 15px;
+  background: var(--console-prompt);
+  vertical-align: text-bottom;
+  animation: blink 1.1s steps(1) infinite;
+}
+
+@keyframes blink { 50% { opacity: 0; } }
+
+p.term-note {
+  font-size: 13.5px;
+  color: var(--text-muted);
+  margin-bottom: 48px;
+}
+
+/* -- sections ---------------------------------------------- */
+
+section { padding: 52px 0; border-top: 1px solid var(--border-faint); }
+
+section h2 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 20px;
+}
+
+section p { margin-bottom: 18px; }
+section p.muted { color: var(--text-muted); }
+
+/* -- projection grid --------------------------------------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 26px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px 22px;
+}
+
+.card h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.card p { font-size: 14px; color: var(--text-muted); margin: 0; }
+
+.card .mono { font-family: var(--mono); font-size: 12.5px; }
+
+/* -- chain ------------------------------------------------- */
+
+.chain {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 18px;
+  overflow-x: auto;
+  white-space: nowrap;
+  color: var(--text-muted);
+  margin-top: 18px;
+}
+
+.chain b { color: var(--accent); font-weight: 600; }
+
+/* -- code block -------------------------------------------- */
+
+pre.code {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.7;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px 24px;
+  overflow-x: auto;
+  margin-top: 18px;
+}
+
+pre.code .k { color: var(--accent); }
+pre.code .c { color: var(--text-muted); font-style: italic; }
+
+/* -- footer ------------------------------------------------ */
+
+footer {
+  border-top: 1px solid var(--border-faint);
+  padding: 28px 0 56px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="hero">
+    <h1>regtable<span class="dev">.dev</span></h1>
+    <p class="tag">Expose an MCU&rsquo;s state the way a PLC exposes its registers:
+    one register table, reachable over a serial CLI, Modbus&nbsp;RTU/TCP, MQTT,
+    and a browser. Pure C99, no allocation.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/rangersui/regtable">GitHub</a>
+      <a class="btn" href="https://github.com/rangersui/regtable#try-it-on-the-desktop">Try it on the desktop</a>
+    </div>
+
+    <div class="term" id="term" aria-label="terminal session example"></div>
+    <p class="term-note">The same firmware, verbatim, answers a terminal, a Modbus
+    master, an MQTT broker, and the Web&nbsp;Serial panel.</p>
+  </div>
+
+  <section>
+    <h2>State, not commands</h2>
+    <p>A serial assistant is a tool for the wire: bytes in, bytes out, and the
+    meaning stays in the operator&rsquo;s head. regtable is a tool for the state
+    behind the wire, and the wire is one of several ways in.</p>
+    <p>The difference comes from one decision: the interface is nouns, not
+    verbs. There is no start-pump command anywhere in this library; there is a
+    <code>pump</code> register, and writing 1 to it.</p>
+    <p>A command vocabulary grows with every feature, and every protocol
+    reinvents it. A state vocabulary closes: name, type, permission, range.
+    After that, each interface is only a wire format for the same four facts,
+    and validation happens once, below all of them.</p>
+    <p>Modbus made the same choice in 1979; a PLC exposes registers and coils,
+    not verbs. Two primitives then cover every interface: pull (a
+    <code>get</code>, a Modbus read, a poll) and push (a value crossing its
+    last-published shadow, an MQTT publish).</p>
+
+  </section>
+
+  <section>
+    <h2>One table, six projections</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Serial CLI</h3>
+        <p><span class="mono">get &middot; set &middot; info &middot; list</span>,
+        each with <span class="mono">--json</span>: one CLI for humans and
+        machines.</p>
+      </div>
+      <div class="card">
+        <h3>Modbus RTU / TCP</h3>
+        <p>FC 03/04/06/16, CRC, spec-faithful exceptions. Any SCADA or PLC
+        master reads and writes.</p>
+      </div>
+      <div class="card">
+        <h3>MQTT</h3>
+        <p>State published on change, retained; commands on
+        <span class="mono">&lt;name&gt;/set</span>.</p>
+      </div>
+      <div class="card">
+        <h3>YAML codegen</h3>
+        <p>One description generates the table and its docs; every constraint
+        checked before compiling.</p>
+      </div>
+      <div class="card">
+        <h3>Web panel</h3>
+        <p>The table renders itself in a browser: values, sliders, toggles,
+        trends. Zero configuration.</p>
+      </div>
+      <div class="card">
+        <h3>Hooks</h3>
+        <p><span class="mono">on_write</span> checks,
+        <span class="mono">on_read</span> computes,
+        <span class="mono">on_change</span> reports.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The other half was already built</h2>
+    <p>A HAL wraps thousands of silicon registers into typed handles for the
+    firmware engineer. regtable wraps application variables into typed entries
+    for the outside world. Together they are one chain:</p>
+    <div class="chain">silicon registers &rarr; HAL handle &rarr; application
+    variables &rarr; <b>RegEntry</b> &rarr; CLI / Modbus / MQTT / panel</div>
+  </section>
+
+  <section>
+    <h2>A register is one line</h2>
+<pre class="code"><span class="k">static const</span> RegEntry registry[] = {
+    { .name = <span class="k">"temp"</span>,     .ptr = &amp;temp,     .type = REG_FLOAT, .perm = REG_RO },
+    { .name = <span class="k">"interval"</span>, .ptr = &amp;interval, .type = REG_U16,   .perm = REG_RW,
+      .min.u = 100, .max.u = 60000, .modbus_addr = 1 },
+    { .name = <span class="k">"led"</span>,      .ptr = &amp;led,      .type = REG_BOOL,  .perm = REG_RW,
+      .on_change = led_changed },
+    { .name = NULL }
+};  <span class="c">/* the table is const: it lives in flash */</span></pre>
+    <p class="muted" style="margin-top:12px">C99 and the standard library, no
+    dynamic allocation, no platform headers. The transport is two function
+    pointers; switching chips means changing two function bodies.</p>
+  </section>
+
+  <footer>
+    <div>MIT licensed &middot; <a href="https://github.com/rangersui/regtable">github.com/rangersui/regtable</a></div>
+  </footer>
+
+</div>
+
+<script>
+/* the hero terminal types out a real session */
+const LINES = [
+  ['p', '> '], ['t', 'list'],
+  ['r', 'NAME            TYPE   PERM  VALUE'],
+  ['r', '--------------------------------------------'],
+  ['r', 'temp            FLOAT  RO    23.4'],
+  ['r', 'interval        U16    RW    1000'],
+  ['r', 'led             BOOL   RW    false'],
+  ['p', '> '], ['t', 'set led true'],
+  ['r', 'OK'],
+  ['p', '> '], ['t', 'set interval 50'],
+  ['r', 'ERR: out of range'],
+  ['p', '> '], ['t', 'info interval --json'],
+  ['r', '{"name":"interval","type":"U16","perm":"RW","value":1000,' +
+        '"min":100,"max":60000,"modbus":1}'],
+];
+
+const term = document.getElementById('term');
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function span(cls, text) {
+  const s = document.createElement('span');
+  if (cls) s.className = cls;
+  s.textContent = text;
+  return s;
+}
+
+async function play() {
+  const cur = span('cursor', '');
+  term.appendChild(cur);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  for (const [kind, text] of LINES) {
+    if (kind === 'p') {
+      term.insertBefore(span('p', text), cur);
+    } else if (kind === 't') {
+      for (const ch of text) {
+        term.insertBefore(span('', ch), cur);
+        await sleep(reduced ? 0 : 34);
+      }
+      term.insertBefore(document.createElement('br'), cur);
+      await sleep(reduced ? 0 : 160);
+    } else {
+      term.insertBefore(span('d', text), cur);
+      term.insertBefore(document.createElement('br'), cur);
+      await sleep(reduced ? 0 : 60);
+    }
+  }
+}
+play();
+</script>
+
+</body>
+</html>

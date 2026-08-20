@@ -195,8 +195,16 @@ header p.subtitle {
   transition: background 0.3s;
 }
 
-.status-dot.connected { background: var(--connected); }
+.status-dot.connected {
+  background: var(--connected);
+  animation: breathe 2.4s ease-in-out infinite;
+}
 .status-dot.error { background: var(--error); }
+
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--connected) 45%, transparent); }
+  50%      { box-shadow: 0 0 0 5px color-mix(in srgb, var(--connected) 0%, transparent); }
+}
 
 /* -- toolbar ----------------------------------------------- */
 
@@ -329,6 +337,10 @@ header p.subtitle {
   border-bottom: none;
 }
 
+.reg-table tbody tr:hover td {
+  background: var(--rw-bg);
+}
+
 .reg-table .col-name {
   font-family: var(--mono);
   font-size: 13px;
@@ -380,8 +392,11 @@ header p.subtitle {
   padding: 2px 6px;
   margin: -2px -6px;
   border-radius: 3px;
-  transition: background 0.15s;
+  border-bottom: 1px dashed var(--border);
+  transition: background 0.15s, border-color 0.15s;
 }
+
+.val-display.editable:hover { border-bottom-color: var(--accent); }
 
 .val-display.editable:hover {
   background: var(--accent-bg);
@@ -482,9 +497,15 @@ header p.subtitle {
   font-size: 12px;
   line-height: 1.6;
   color: var(--console-text);
+}
+
+.console-output div {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+.console-output .c-cmd { color: var(--console-prompt); }
+.console-output .c-err { color: var(--error); }
 
 .console-input-row {
   display: flex;
@@ -511,6 +532,28 @@ header p.subtitle {
 }
 
 .console-input::placeholder { color: #555960; }
+
+/* -- sparklines -------------------------------------------- */
+
+.spark {
+  color: var(--accent);
+  opacity: 0.75;
+  margin-left: 10px;
+  vertical-align: middle;
+}
+
+/* -- type badges ------------------------------------------- */
+
+.type-badge {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border: 1px solid var(--border-faint);
+  border-radius: 3px;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+}
 
 /* -- tabs -------------------------------------------------- */
 
@@ -627,14 +670,14 @@ header p.subtitle {
 .not-supported strong { color: var(--error); }
 
 @media (prefers-reduced-motion: reduce) {
-  .val-flash, .val-error { animation: none; }
+  .val-flash, .val-error, .status-dot.connected { animation: none; }
 }
 </style>
 
 <div class="container">
   <header>
     <h1>regtable<span>panel</span></h1>
-    <p class="subtitle">Web Serial interface to the register table CLI</p>
+    <p class="subtitle">Web Serial interface to the register table CLI<span id="dev-summary"></span></p>
   </header>
 
   <div id="not-supported" class="not-supported" style="display:none">
@@ -697,7 +740,7 @@ header p.subtitle {
   <div class="reg-table-wrap">
     <div class="empty-state" id="empty-state">
       <p>No registers loaded</p>
-      <p class="hint">Connect a serial port to discover the table</p>
+      <p class="hint">Connect a serial port; the table announces itself over <code style="font-family: var(--mono)">list --json</code></p>
     </div>
     <table class="reg-table" id="reg-table" style="display:none">
       <thead>
@@ -768,8 +811,7 @@ header p.subtitle {
       <div class="console-input-row">
         <span class="console-prompt">&gt;</span>
         <input class="console-input" id="console-input"
-               placeholder="list --json"
-               onkeydown="if(event.key==='Enter')sendConsole()">
+               placeholder="list --json   (Tab completes)">
       </div>
     </div>
   </div>
@@ -786,6 +828,8 @@ let connState = 'disconnected';  /* disconnected | opening | ready | closing */
 let connGen = 0;                 /* bumped when a connection attempt dies */
 let registers = [];
 const cells = new Map();         /* register name -> value <td> */
+const history = new Map();       /* register name -> recent numeric samples */
+const HISTORY_LEN = 40;
 let pollOn = false;
 let pollLoopRunning = false;
 let pendingResolve = null;
@@ -828,6 +872,7 @@ async function openPort() {
 /* release everything, in stream-teardown order; safe to call twice */
 async function teardown() {
   stopAutoPoll();
+  history.clear();
   if (reader) { try { await reader.cancel(); } catch (_) {} reader = null; }
   if (pipeDone) { try { await pipeDone; } catch (_) {} pipeDone = null; }
   if (writer) { try { writer.releaseLock(); } catch (_) {} writer = null; }
@@ -948,7 +993,7 @@ async function refreshAll() {
       renderTable();
     }
   } catch (e) {
-    consoleLog('refresh error: ' + e.message);
+    consoleLog('refresh error: ' + e.message, 'c-err');
   }
 }
 
@@ -961,7 +1006,7 @@ async function setValue(name, value) {
     if (obj.error) {
       restoreCell(name);                   /* an edit box must not stay */
       if (cell) cell.classList.add('val-error');
-      consoleLog('set ' + name + ': ' + obj.error);
+      consoleLog('set ' + name + ': ' + obj.error, 'c-err');
       setTimeout(() => cell && cell.classList.remove('val-error'), 700);
       return false;
     }
@@ -976,7 +1021,7 @@ async function setValue(name, value) {
     return true;
   } catch (e) {
     restoreCell(name);
-    consoleLog('set error: ' + e.message);
+    consoleLog('set error: ' + e.message, 'c-err');
     return false;
   }
 }
@@ -1010,6 +1055,7 @@ function setState(s) {
   if (s === 'disconnected') {
     $('empty-state').style.display = '';
     $('reg-table').style.display = 'none';
+    $('dev-summary').textContent = '';
   }
 }
 
@@ -1038,7 +1084,7 @@ async function toggleConnect() {
       await refreshAll();
     }
   } catch (e) {
-    consoleLog('connect: ' + e.message);
+    consoleLog('connect: ' + e.message, 'c-err');
     await teardown();
     setState('disconnected');
     $('status-dot').className = 'status-dot error';
@@ -1066,6 +1112,7 @@ function renderTable() {
   }
   $('empty-state').style.display = 'none';
   $('reg-table').style.display = '';
+  $('dev-summary').textContent = ' · ' + registers.length + ' registers';
 
   for (const r of registers) {
     const tr = document.createElement('tr');
@@ -1076,7 +1123,12 @@ function renderTable() {
       return d;
     };
     td('col-name').textContent = r.name;
-    td('col-type').textContent = r.type;
+    {
+      const b = document.createElement('span');
+      b.className = 'type-badge';
+      b.textContent = r.type;
+      td('col-type').appendChild(b);
+    }
     const perm = td('col-perm');
     if (r.perm === 'RW') {
       const s = document.createElement('span');
@@ -1104,6 +1156,10 @@ function buildValCell(cell, r) {
 
   if (r.perm !== 'RW') {
     span.className = 'val-display';
+    const ro = history.get(r.name);
+    if (ro && ro.length >= 2 && new Set(ro).size > 1) {
+      cell.appendChild(sparkline(ro));
+    }
     return;
   }
 
@@ -1148,6 +1204,11 @@ function buildValCell(cell, r) {
     });
     cell.appendChild(sl);
   }
+
+  const h = history.get(r.name);
+  if (h && h.length >= 2 && new Set(h).size > 1) {
+    cell.appendChild(sparkline(h));
+  }
 }
 
 /* poll-driven update: hands off while the user holds the cell */
@@ -1156,8 +1217,39 @@ function renderValue(name, value) {
   const cell = cells.get(name);
   if (!reg || !cell) return;
   reg.value = value;
+  if (typeof value === 'number') {
+    const h = history.get(name) || [];
+    h.push(value);
+    if (h.length > HISTORY_LEN) h.shift();
+    history.set(name, h);
+  }
   if (cell.contains(document.activeElement)) return;
   buildValCell(cell, reg);
+}
+
+/* a 40-sample trend line, drawn from the panel's own poll history:
+ * the host remembers, the device stays memoryless */
+function sparkline(samples) {
+  const W = 60, H = 18, ns = 'http://www.w3.org/2000/svg';
+  const min = Math.min(...samples), max = Math.max(...samples);
+  const span = (max - min) || 1;
+  const n = samples.length;
+  const pts = samples.map((v, i) =>
+    (1 + i / (n - 1) * (W - 2)).toFixed(1) + ',' +
+    (H - 2 - (v - min) / span * (H - 4)).toFixed(1)).join(' ');
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('class', 'spark');
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  const pl = document.createElementNS(ns, 'polyline');
+  pl.setAttribute('points', pts);
+  pl.setAttribute('fill', 'none');
+  pl.setAttribute('stroke', 'currentColor');
+  pl.setAttribute('stroke-width', '1.5');
+  pl.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(pl);
+  return svg;
 }
 
 /* unconditional rebuild: for edit teardown, where the element being
@@ -1288,9 +1380,12 @@ function toggleConsole() {
   if (open) $('console-input').focus();
 }
 
-function consoleLog(text) {
+function consoleLog(text, cls) {
   const out = $('console-output');
-  out.textContent += text + '\n';
+  const div = document.createElement('div');
+  if (cls) div.className = cls;
+  div.textContent = text;
+  out.appendChild(div);
   out.scrollTop = out.scrollHeight;
 }
 
@@ -1299,10 +1394,10 @@ async function sendConsole() {
   const cmd = inp.value.trim();
   if (!cmd || connState !== 'ready') return;
   inp.value = '';
-  consoleLog('> ' + cmd);
+  consoleLog('> ' + cmd, 'c-cmd');
   try {
     const text = await sendCmdGetAll(cmd);
-    consoleLog(text);
+    consoleLog(text, /^ERR|"error"/.test(text) ? 'c-err' : '');
     try {
       const obj = JSON.parse(text);
       if (Array.isArray(obj)) {
@@ -1311,9 +1406,47 @@ async function sendConsole() {
       }
     } catch (_) {}
   } catch (e) {
-    consoleLog('error: ' + e.message);
+    consoleLog('error: ' + e.message, 'c-err');
   }
 }
+
+/* -- console completion ----------------------------------- */
+/*  Tab completes the token under the cursor: commands first,
+ *  register names after get/set/info, --json anywhere later.
+ *  The candidate pool is the discovered table itself. */
+
+function completeConsole(inp) {
+  const text = inp.value;
+  const parts = text.split(/\s+/);
+  const last = parts[parts.length - 1] || '';
+  let pool;
+  if (parts.length <= 1) {
+    pool = ['list', 'get', 'set', 'info', 'help'];
+  } else if (last.startsWith('-')) {
+    pool = ['--json'];
+  } else if (parts.length === 2 && ['get', 'set', 'info'].includes(parts[0])) {
+    pool = registers.map(r => r.name);
+  } else {
+    pool = ['--json'];
+  }
+  const cands = pool.filter(c => c.startsWith(last));
+  if (!cands.length) return;
+  let common = cands[0];
+  for (const c of cands) {
+    while (!c.startsWith(common)) common = common.slice(0, -1);
+  }
+  if (common.length > last.length) {
+    inp.value = text.slice(0, text.length - last.length) + common +
+      (cands.length === 1 ? ' ' : '');
+  } else if (cands.length > 1) {
+    consoleLog(cands.join('   '));
+  }
+}
+
+$('console-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { sendConsole(); }
+  else if (e.key === 'Tab') { e.preventDefault(); completeConsole(e.target); }
+});
 
 /* -- init ------------------------------------------------- */
 
