@@ -13,3 +13,12 @@ crash-*
 leak-*
 timeout-*
 fuzz.pdb
+specs/
+mbtest
+mbtest.exe
+fuzz_mb
+fuzz_mb.exe
+fuzz_mb.lib
+fuzz_mb.exp
+fuzz_mb.pdb
+corpus_mb/

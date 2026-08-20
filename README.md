@@ -7,7 +7,7 @@ Expose any Cortex-M MCU's state the way a PLC exposes its registers: one registe
 A table of named registers (C variables plus selected hardware peripherals) is exposed through:
 
 - **Serial CLI** `get temp`, `set led true`, `info interval`, `list`, all with `--json`
-- **Modbus RTU** any SCADA / HMI / PLC master can read/write (planned)
+- **Modbus RTU** any SCADA / HMI / PLC master can read/write
 - **MQTT** publish state, subscribe to commands (planned)
 - **MCP** AI agents operate the device (planned)
 - **Web UI** browser connects via Web Serial / Web Bluetooth (planned)
@@ -95,7 +95,7 @@ static void led_changed(const RegEntry *e) { HAL_GPIO_WritePin(LED_GPIO_Port, LE
 static const RegEntry registry[] = {
     { .name = "temp",     .ptr = &temp,     .type = REG_FLOAT, .perm = REG_RO },
     { .name = "interval", .ptr = &interval, .type = REG_U16,   .perm = REG_RW,
-      .min.u = 100, .max.u = 60000 },
+      .min.u = 100, .max.u = 60000, .modbus_addr = 1 },
     { .name = "led",      .ptr = &led,      .type = REG_BOOL,  .perm = REG_RW,
       .on_change = led_changed },
     { .name = NULL }
@@ -160,11 +160,11 @@ type:   U16
 perm:   RW
 value:  1000
 range:  100..60000
-modbus: 0x0000
+modbus: 0x0001
 desc:   Sampling interval in ms
 
 > info interval --json
-{"name":"interval","type":"U16","perm":"RW","value":1000,"min":100,"max":60000,"modbus":0,"desc":"Sampling interval in ms"}
+{"name":"interval","type":"U16","perm":"RW","value":1000,"min":100,"max":60000,"modbus":1,"desc":"Sampling interval in ms"}
 
 > set interval 500 --json
 {"result":"OK"}
@@ -174,6 +174,34 @@ desc:   Sampling interval in ms
 ```
 
 `--json` works on `list`, `get`, `set` and `info`: `list --json` returns the whole table as one array, `get` and `set` answer with one small object, errors come back as `{"error":"..."}`. A host program (an MCP server, a Web UI, a test script) can discover every register, its type, its limits, and its description from the device itself, then drive it in the same format.
+
+## Modbus RTU
+
+The Modbus adapter is a slave: one received frame in, one response frame out.
+
+```c
+#include "regtable_modbus.h"
+
+RegModbus mb;
+regmb_init(&mb, &table, 1);              /* slave address 1 */
+
+/* platform code collects bytes until the line is idle for 3.5
+ * character times (t3.5, from the serial line spec), then: */
+uint16_t n = regmb_process(&mb, frame, frame_len, resp, sizeof(resp));
+if (n > 0) uart_send(resp, n);           /* n == 0: stay silent */
+```
+
+An entry joins the Modbus map by setting `modbus_addr`, its word address: one word for U8/I8/U16/I16/BOOL, two words for U32/I32/FLOAT. `modbus_addr` 0 means not mapped, so the map starts at word address 1. Unmapped entries stay reachable through the CLI and are invisible to Modbus.
+
+- Function codes 03/04 (read holding/input, one overlaid map), 06 (write single), 16 (write multiple). Others answer exception 01.
+- Writes go through `reg_set_raw`, the same path as every other adapter: type domain, range, `on_write` veto, dirty bit for `on_change`. A refused write answers exception 04.
+- A request covering half of a two-word value answers exception 02.
+- Two-word values travel high word first; `mb.word_swap = true` switches to low word first for masters that expect CDAB.
+- CRC-16 is checked inside `regmb_process`; a bad frame is dropped silently, per the spec. Broadcasts (address 0) apply writes and are never answered.
+
+Frame boundary detection (the t3.5 silence) belongs to platform code: a UART idle interrupt on STM32, a `micros()` gap check on Arduino, an inter-byte timeout on a desktop serial port. The adapter itself runs no timers and does no I/O.
+
+`list --json` on the CLI shows each entry's `modbus` address, so a host can discover the register map from the device itself.
 
 ## Atomicity
 

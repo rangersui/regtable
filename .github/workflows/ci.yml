@@ -50,8 +50,8 @@ jobs:
           for cpu in cortex-m0 cortex-m4; do
             arm-none-eabi-gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -Os \
               -mcpu=$cpu -mthumb -ffunction-sections -fdata-sections \
-              -Isrc -c src/regtable_core.c src/regtable_cli.c
-            arm-none-eabi-size regtable_core.o regtable_cli.o
+              -Isrc -c src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c
+            arm-none-eabi-size regtable_core.o regtable_cli.o regtable_modbus.o
           done
 
   # the Arduino example, built the way the IDE builds it: repo as a
@@ -74,6 +74,10 @@ jobs:
             -fsanitize=address,undefined -fno-sanitize-recover=all \
             -Isrc -o regtest regtable_test.c src/regtable_core.c src/regtable_cli.c -lm
           ./regtest
+          gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -O1 -g \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Isrc -o mbtest regtable_modbus_test.c src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c -lm
+          ./mbtest
 
   # coverage-guided search on the CLI byte path
   fuzz:
@@ -81,6 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: make fuzz FUZZ_TIME=90
+      - run: make fuzz-mb FUZZ_TIME=90
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

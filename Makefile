@@ -5,6 +5,7 @@
 #   make test     build and run the regression test
 #   make strict   rebuild everything with -Werror and run the test
 #   make fuzz     libFuzzer + ASan/UBSan on the CLI byte path (needs clang)
+#   make fuzz-mb  same, on the Modbus RTU frame path
 #   make clean
 #
 # Works with GNU make on Linux, macOS, Git Bash, and Windows cmd
@@ -16,8 +17,8 @@ CFLAGS  ?= -std=c99 -Wall -Wextra -Wpedantic -O2
 # override: -Isrc stays even when CFLAGS=... is given on the command line
 override CFLAGS += -Isrc
 
-LIB_SRC  = src/regtable_core.c src/regtable_cli.c
-LIB_HDR  = src/regtable_core.h src/regtable_cli.h
+LIB_SRC  = src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c
+LIB_HDR  = src/regtable_core.h src/regtable_cli.h src/regtable_modbus.h
 
 # Windows only differs in the .exe suffix. GNU make on Windows runs
 # recipes through sh when one is on PATH (Git for Windows provides
@@ -35,10 +36,11 @@ RM := rm -f
 
 EXAMPLE = example$(EXE)
 TEST    = regtest$(EXE)
+MBTEST  = mbtest$(EXE)
 
-.PHONY: all run test strict fuzz clean
+.PHONY: all run test strict fuzz fuzz-mb clean
 
-all: $(EXAMPLE) $(TEST)
+all: $(EXAMPLE) $(TEST) $(MBTEST)
 
 # warnings become errors; forces a full rebuild so nothing stale slips by
 strict:
@@ -51,11 +53,15 @@ $(EXAMPLE): example_desktop.c $(LIB_SRC) $(LIB_HDR)
 $(TEST): regtable_test.c $(LIB_SRC) $(LIB_HDR)
 	$(CC) $(CFLAGS) -o $@ regtable_test.c $(LIB_SRC) $(LIBM)
 
+$(MBTEST): regtable_modbus_test.c $(LIB_SRC) $(LIB_HDR)
+	$(CC) $(CFLAGS) -o $@ regtable_modbus_test.c $(LIB_SRC) $(LIBM)
+
 run: $(EXAMPLE)
 	./$(EXAMPLE)
 
-test: $(TEST)
+test: $(TEST) $(MBTEST)
 	./$(TEST)
+	./$(MBTEST)
 
 # Coverage-guided search for inputs the regression test did not think
 # of. Seeds a corpus with a few valid lines, then runs for FUZZ_TIME
@@ -76,6 +82,14 @@ fuzz: regtable_fuzz.c $(LIB_SRC) $(LIB_HDR)
 	printf 'set offset -0x10\nset led TRUE\n' > corpus/multi
 	./$(FUZZ) corpus -max_len=256 -max_total_time=$(FUZZ_TIME)
 
+FUZZMB = fuzz_mb$(EXE)
+
+fuzz-mb: regtable_modbus_fuzz.c $(LIB_SRC) $(LIB_HDR)
+	clang -g -O1 -Isrc -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined \
+	    -o $(FUZZMB) regtable_modbus_fuzz.c $(LIB_SRC) $(LIBM)
+	mkdir -p corpus_mb
+	./$(FUZZMB) corpus_mb -max_len=260 -max_total_time=$(FUZZ_TIME)
+
 clean:
-	-$(RM) $(EXAMPLE) $(TEST) $(FUZZ) fuzz.lib fuzz.exp fuzz.pdb
-	-$(RM) -r corpus crash-* leak-* timeout-*
+	-$(RM) $(EXAMPLE) $(TEST) $(MBTEST) $(FUZZ) $(FUZZMB) fuzz.lib fuzz.exp fuzz.pdb fuzz_mb.lib fuzz_mb.exp fuzz_mb.pdb
+	-$(RM) -r corpus corpus_mb crash-* leak-* timeout-*

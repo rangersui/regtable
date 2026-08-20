@@ -56,7 +56,8 @@ static const RegEntry registry[] = {
     { .name = "temp",     .ptr = &temperature, .type = REG_FLOAT, .perm = REG_RO,
       .on_change = temp_changed, .description = "Water temperature" },
     { .name = "interval", .ptr = &interval,    .type = REG_U16,   .perm = REG_RW,
-      .min.u = 100, .max.u = 60000, .description = "Sampling interval in ms" },
+      .min.u = 100, .max.u = 60000, .modbus_addr = 1,
+      .description = "Sampling interval in ms" },
     { .name = "led",      .ptr = &led_state,   .type = REG_BOOL,  .perm = REG_RW,
       .on_change = led_changed },
     { .name = "counter",  .ptr = &counter,     .type = REG_U32,   .perm = REG_RO },
@@ -385,7 +386,13 @@ static void test_list_and_info(void)
     CONTAINS("info interval", "desc:   Sampling interval in ms\r\n");
     CONTAINS("info offset",   "range:  -50..50\r\n");
     CONTAINS("info gain",     "range:  0.5..2.5\r\n");
-    CONTAINS("info counter",  "modbus: 0x0000\r\n");
+    CONTAINS("info interval", "modbus: 0x0001\r\n");
+    /* counter is not in the Modbus map: no modbus line at all */
+    cases++;
+    if (strstr(run("info counter"), "modbus") != NULL) {
+        failures++;
+        printf("FAIL %s:%d  unmapped entry shows a modbus line\n", __FILE__, __LINE__);
+    }
     EXPECT  ("info nothing",  "ERR: not found\r\n");
     CONTAINS("help",          "  info <name>         show register metadata\r\n");
 }
@@ -414,15 +421,15 @@ static void test_json(void)
     /* single objects, exact */
     EXPECT("info interval --json",
         "{\"name\":\"interval\",\"type\":\"U16\",\"perm\":\"RW\",\"value\":500,"
-        "\"min\":100,\"max\":60000,\"modbus\":0,\"desc\":\"Sampling interval in ms\"}\r\n");
+        "\"min\":100,\"max\":60000,\"modbus\":1,\"desc\":\"Sampling interval in ms\"}\r\n");
     EXPECT("info --json offset",                       /* flag position is free */
         "{\"name\":\"offset\",\"type\":\"I16\",\"perm\":\"RW\",\"value\":-10,"
-        "\"min\":-50,\"max\":50,\"modbus\":0}\r\n");
+        "\"min\":-50,\"max\":50}\r\n");
     EXPECT("info gain --json",
         "{\"name\":\"gain\",\"type\":\"FLOAT\",\"perm\":\"RW\",\"value\":1.5,"
-        "\"min\":0.5,\"max\":2.5,\"modbus\":0}\r\n");
+        "\"min\":0.5,\"max\":2.5}\r\n");
     EXPECT("info led --json",
-        "{\"name\":\"led\",\"type\":\"BOOL\",\"perm\":\"RW\",\"value\":true,\"modbus\":0}\r\n");
+        "{\"name\":\"led\",\"type\":\"BOOL\",\"perm\":\"RW\",\"value\":true}\r\n");
     EXPECT("info nothing --json", "{\"error\":\"ERR: not found\"}\r\n");
 
     /* whole table: array, comma-separated, first and last entry present */
@@ -431,7 +438,7 @@ static void test_json(void)
     if (!(all[0] == '[' &&
           strstr(all, "{\"name\":\"temp\",") == all + 1 &&
           strstr(all, "},{\"name\":\"interval\"") != NULL &&
-          strstr(all, "{\"name\":\"hwreg\",\"type\":\"U32\",\"perm\":\"RW\",\"value\":3735928559,\"modbus\":0}]\r\n") != NULL)) {
+          strstr(all, "{\"name\":\"hwreg\",\"type\":\"U32\",\"perm\":\"RW\",\"value\":3735928559}]\r\n") != NULL)) {
         failures++;
         printf("FAIL %s:%d  list --json shape\n   got: %s\n", __FILE__, __LINE__, all);
     }
@@ -489,7 +496,7 @@ static void test_json_escape(void)
     cap_len = 0; cap[0] = '\0';
     for (const char *p = "info q --json\n"; *p; p++) regcli_feed(&c2, (uint8_t)*p);
     CHECK(strcmp(cap,
-        "{\"name\":\"q\",\"type\":\"U8\",\"perm\":\"RO\",\"value\":0,\"modbus\":0,"
+        "{\"name\":\"q\",\"type\":\"U8\",\"perm\":\"RO\",\"value\":0,"
         "\"desc\":\"say \\\"hi\\\" \\\\ tab\\there\\nnew\"}\r\n") == 0);
 
     /* plain runs go out in one write each, not one byte per call:

@@ -108,7 +108,9 @@ static void json_entry(RegCli *cli, const RegEntry *e)
             break;
         }
     }
-    cli_print(cli, ",\"modbus\":%u", (unsigned)e->modbus_addr);
+    if (e->modbus_addr) {
+        cli_print(cli, ",\"modbus\":%u", (unsigned)e->modbus_addr);
+    }
     if (e->description) {
         cli_puts(cli, ",\"desc\":");
         json_str(cli, e->description);
@@ -273,7 +275,9 @@ static void cmd_info(RegCli *cli, const char *name, bool json)
             break;
         }
     }
-    cli_print(cli, "modbus: 0x%04X\r\n", e->modbus_addr);
+    if (e->modbus_addr) {
+        cli_print(cli, "modbus: 0x%04X\r\n", e->modbus_addr);
+    }
     if (e->description) {
         cli_puts(cli, "desc:   ");
         cli_puts(cli, e->description);

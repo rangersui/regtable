@@ -62,7 +62,8 @@ typedef struct RegEntry {
     volatile void *ptr;         /* -> user variable or HW reg     */
     RegType     type;
     RegPerm     perm;
-    uint16_t    modbus_addr;    /* Modbus holding register addr  */
+    uint16_t    modbus_addr;    /* word address in the Modbus map;
+                                   0 = not mapped */
     RegLimit    min;            /* .min.u / .min.i / .min.f      */
     RegLimit    max;
 
