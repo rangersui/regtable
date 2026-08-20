@@ -4,6 +4,7 @@
  *   led     BOOL RW   on_change drives the built-in LED
  *   a0      U16  RO   on_read samples analog pin A0
  *   uptime  U32  RO   on_read reads millis()
+ *   pwm9    U8   RW   0..255, on_change sets PWM duty on pin 9
  *
  * Open Serial Monitor at 115200, line ending "Newline", and type:
  *   list
@@ -23,6 +24,7 @@
 static uint8_t  led    = 0;
 static uint16_t a0     = 0;
 static uint32_t uptime = 0;
+static uint8_t  pwm9   = 0;
 
 /* -- hooks ------------------------------------------------- */
 
@@ -42,6 +44,12 @@ static void uptime_read(const RegEntry *e)
 {
     (void)e;
     uptime = millis();
+}
+
+static void pwm9_changed(const RegEntry *e)
+{
+    (void)e;
+    analogWrite(9, pwm9);      /* dim an LED wired to pin 9 */
 }
 
 /* -- table ------------------------------------------------- */
@@ -64,6 +72,10 @@ static const RegEntry registry[] = {
       .modbus_addr = 0, .min = {0}, .max = {0},
       .on_write = NULL, .on_read = uptime_read, .on_change = NULL,
       .description = "millis()" },
+    { .name = "pwm9",   .ptr = &pwm9,   .type = REG_U8,   .perm = REG_RW,
+      .modbus_addr = 0, .min = { .u = 0 }, .max = { .u = 255 },
+      .on_write = NULL, .on_read = NULL, .on_change = pwm9_changed,
+      .description = "PWM duty on pin 9" },
     { .name = NULL,     .ptr = NULL,    .type = REG_U8,   .perm = REG_RO,
       .modbus_addr = 0, .min = {0}, .max = {0},
       .on_write = NULL, .on_read = NULL, .on_change = NULL,

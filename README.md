@@ -6,12 +6,11 @@ Expose any Cortex-M MCU's state the way a PLC exposes its registers: one registe
 
 A table of named registers (C variables plus selected hardware peripherals) is exposed through:
 
-- **Serial CLI** `get temp`, `set led true`, `info interval`, `list`, all with `--json`
+- **Serial CLI** `get temp`, `set led true`, `info interval`, `list`; `--json` on every command makes the same CLI the machine interface: discovery, typed calls, structured errors
 - **Modbus RTU / TCP** any SCADA / HMI / PLC master can read/write
 - **MQTT** publish state, subscribe to commands
 - **YAML codegen** one description generates the C table and its documentation
-- **MCP** AI agents operate the device (planned)
-- **Web UI** browser connects via Web Serial / Web Bluetooth (planned)
+- **Web panel** browser connects via Web Serial: live table, sliders, toggles, console
 
 All interfaces share one typed access path: `reg_set_raw()` / `reg_get_raw()`. Type checking, permission enforcement, range validation, and write callbacks happen once in the core. Protocol adapters only translate wire formats.
 
@@ -23,17 +22,27 @@ regtable exposes state. It does not execute logic.
 
 Control logic lives in the application's C code. regtable makes variables readable and writable from outside. No rule engine, no programming language, no function block library. When an `on_write` hook rejects a value or an `on_change` hook fires an alarm, that is application code, not regtable's.
 
+## State, not commands
+
+A serial assistant is a tool for the wire: bytes in, bytes out, and the meaning stays in the operator's head. regtable is a tool for the state behind the wire, and the wire is one of several ways in.
+
+The difference comes from one decision: the interface is nouns, not verbs. There is no start-pump command anywhere in this library; there is a `pump` register, and writing 1 to it. A command vocabulary grows with every feature, and every protocol reinvents it. A state vocabulary closes: name, type, permission, range. After that, each interface is only a wire format for the same four facts, and validation happens once, below all of them. Modbus made the same choice in 1979; a PLC exposes registers and coils, not verbs.
+
+Two primitives then cover every interface: pull (a `get`, a Modbus read, a poll) and push (a value crossing its last-published shadow, an MQTT publish). A new protocol is an envelope over one of the two.
+
+The project's boundaries fall out of the same decision. History belongs to the host: trends are a poller and a historian, and both ends already exist (a dashboard stack behind the MQTT adapter, a SCADA behind the Modbus adapter). Gateways belong at trust boundaries. The device stays memoryless and answers one question: what is the state, now.
+
 ## Architecture
 
 Two layers on the device, plus host-side projections generated from the same source:
 
 ```
                   ┌────────────────────────────┐
-   SVD ──────────►│   register table           │
-   (silicon)      │   name|type|perm|range     │
+   YAML ─────────►│   register table           │
+   (one source)   │   name|type|perm|range     │
                   │                            │
-   YAML ─────────►│   typed core API           │
-   (product)      │   reg_get_raw / set_raw    │
+                  │   typed core API           │
+                  │   reg_get_raw / set_raw    │
                   └──────────────┬─────────────┘
                      validation lives here, once
                                  │
@@ -47,16 +56,20 @@ Two layers on the device, plus host-side projections generated from the same sou
              human           SCADA / PLC         cloud
 
 
-   host-side projections, generated from the same YAML,
-   talk to the device over CLI or Modbus:
+   host-side projections discover the table from the device
+   itself (list --json) and talk to it over CLI or Modbus:
 
-         MCP server ──► AI agents
-         Web UI     ──► browser (Web Serial / Web Bluetooth)
+         scripts and gateways ──► the --json CLI, as-is
+         Web panel  ──► browser (Web Serial)
 ```
 
-Each adapter owns its transport, framing, and timing; the core table knows nothing about wire formats. One YAML yields four outputs: the C register table, the MCP tool definitions, the Web UI, and the documentation.
+Each adapter owns its transport, framing, and timing; the core table knows nothing about wire formats. One YAML yields the C table and its documentation; host-side tools need no generated code at all, because the table describes itself over the wire.
 
-MCU hardware is already memory-mapped registers. PLC programming has been register-table-driven since Modbus. ARM ships machine-readable register descriptions with every chip (CMSIS-SVD). regtable connects these existing pieces.
+regtable is the upper half of a chain the chip vendors already built the lower half of. A HAL wraps thousands of silicon registers into typed handles for the firmware engineer; regtable wraps application variables into typed entries for the outside world:
+
+```
+silicon registers -> HAL handle -> application variables -> RegEntry -> CLI / Modbus / MQTT / panel
+```
 
 ## Try it on the desktop
 
@@ -85,6 +98,14 @@ Opening the COM port resets the Uno (DTR is wired to reset), and the bootloader 
 A third sketch, [examples/arduino_modbus_tcp/arduino_modbus_tcp.ino](examples/arduino_modbus_tcp/arduino_modbus_tcp.ino), is the same slave over Modbus TCP for boards with an Ethernet shield (W5100/W5500): static IP, port 502, MBAP framing instead of t3.5 silence. This one is compile-verified only; the CLI and RTU sketches are verified on hardware.
 
 On AVR (Uno, Nano, Mega) `printf` has no float support unless the sketch is linked with `-lprintf_flt`, so FLOAT registers print as `?` there; integer and BOOL registers work as-is. On 32-bit Arduino boards (SAMD, RP2040, ESP32) FLOAT works. AVR also keeps `const` data in RAM (regtable does not use PROGMEM), so the table costs a few dozen bytes per entry there.
+
+## Web panel
+
+```bash
+python tools/panel.py
+```
+
+serves [regtable_panel.html](regtable_panel.html) on localhost and opens it (Web Serial needs a secure context; Chrome or Edge). Connect, pick the COM port, and the panel builds itself from the device's `list --json`: read-only values, click-to-edit fields, sliders for ranged numerics, toggles for booleans, an adjustable poll rate, a raw console, and a reference tab that can copy the live register table as Markdown. The device is the only source of truth; the panel ships no per-device configuration.
 
 ## Quick start on the MCU
 
@@ -180,7 +201,23 @@ desc:   Sampling interval in ms
 {"value":500}
 ```
 
-`--json` works on `list`, `get`, `set` and `info`: `list --json` returns the whole table as one array, `get` and `set` answer with one small object, errors come back as `{"error":"..."}`. A host program (an MCP server, a Web UI, a test script) can discover every register, its type, its limits, and its description from the device itself, then drive it in the same format.
+`--json` works on `list`, `get`, `set` and `info`: `list --json` returns the whole table as one array, `get` and `set` answer with one small object, errors come back as `{"error":"..."}`. A host program (a test script, a Web UI, a gateway) can discover every register, its type, its limits, and its description from the device itself, then drive it in the same format. Where a network or trust boundary separates the host from the device, a gateway wraps these same commands and adds the boundary's own concerns (authentication, rate limits, audit).
+
+## Exposing HAL and hardware state
+
+Entries point at any address, so the state worth watching is usually two lines away:
+
+```c
+/* what the HAL thinks of its peripheral: plain struct fields */
+{ .name = "uart2_err",  .ptr = &huart2.ErrorCode, .type = REG_U32, .perm = REG_RO,
+  .description = "UART2 HAL error flags" },
+
+/* the silicon itself: ptr is volatile, CMSIS addresses work directly */
+{ .name = "gpioa_idr",  .ptr = &GPIOA->IDR,       .type = REG_U32, .perm = REG_RO,
+  .description = "Port A input levels" },
+```
+
+Configuration stays with the HAL, which owns the peripheral's state machine; these entries are read-only windows for commissioning and diagnosis. A generated window over many raw peripheral registers (from a CMSIS-SVD description) would sit on this same mechanism.
 
 ## Modbus
 

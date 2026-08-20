@@ -1,0 +1,1324 @@
+<title>regtable panel</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&display=swap">
+
+<style>
+:root {
+  --ground: #ECEEF0;
+  --surface: #FFFFFF;
+  --surface-raised: #F5F6F7;
+  --text: #1A1D21;
+  --text-muted: #5E6470;
+  --border: #CDD1D6;
+  --border-faint: #DFE2E6;
+  --accent: #B87514;
+  --accent-hover: #9A6210;
+  --accent-bg: #FDF5E8;
+  --connected: #2E7D3B;
+  --connected-bg: #E8F5EA;
+  --error: #C03030;
+  --error-bg: #FDECEC;
+  --rw-bg: #F7F8FA;
+  --console-bg: #1C1F25;
+  --console-text: #C8CCD2;
+  --console-prompt: #B87514;
+  --mono: "SFMono-Regular", "Cascadia Code", "Consolas", "Liberation Mono", monospace;
+  --serif: "Source Serif 4", "Georgia", "Times New Roman", serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #131519;
+    --surface: #1C1F25;
+    --surface-raised: #24282E;
+    --text: #CBCDD2;
+    --text-muted: #7D8189;
+    --border: #363A42;
+    --border-faint: #2A2E34;
+    --accent: #D4901A;
+    --accent-hover: #E9A530;
+    --accent-bg: #2C2418;
+    --connected: #4CAF5C;
+    --connected-bg: #1A2E1D;
+    --error: #E05050;
+    --error-bg: #2E1A1A;
+    --rw-bg: #21252A;
+    --console-bg: #0E1014;
+    --console-text: #A0A4AA;
+    --console-prompt: #D4901A;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #131519;
+  --surface: #1C1F25;
+  --surface-raised: #24282E;
+  --text: #CBCDD2;
+  --text-muted: #7D8189;
+  --border: #363A42;
+  --border-faint: #2A2E34;
+  --accent: #D4901A;
+  --accent-hover: #E9A530;
+  --accent-bg: #2C2418;
+  --connected: #4CAF5C;
+  --connected-bg: #1A2E1D;
+  --error: #E05050;
+  --error-bg: #2E1A1A;
+  --rw-bg: #21252A;
+  --console-bg: #0E1014;
+  --console-text: #A0A4AA;
+  --console-prompt: #D4901A;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--serif);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--ground);
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+/* -- header ------------------------------------------------ */
+
+header {
+  margin-bottom: 24px;
+}
+
+header h1 {
+  font-family: var(--serif);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 2px;
+}
+
+header h1 span {
+  font-weight: 300;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+header p.subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* -- connection bar ---------------------------------------- */
+
+.conn-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 20px;
+}
+
+.conn-bar label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.conn-bar select,
+.conn-bar input[type="number"] {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 5px 8px;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+
+.conn-bar select:focus,
+.conn-bar input:focus {
+  border-color: var(--accent);
+}
+
+.conn-bar input[type="number"] {
+  width: 80px;
+}
+
+.conn-btn {
+  font-family: var(--serif);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.conn-btn:hover { background: var(--accent-hover); }
+.conn-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.conn-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.conn-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.3s;
+}
+
+.status-dot.connected { background: var(--connected); }
+.status-dot.error { background: var(--error); }
+
+/* -- toolbar ----------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.toolbar button {
+  font-family: var(--serif);
+  font-size: 13px;
+  padding: 5px 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.toolbar button:hover { border-color: var(--accent); }
+.toolbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.toolbar .auto-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-left: auto;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toolbar .auto-label input {
+  accent-color: var(--accent);
+}
+
+.toolbar select {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 4px 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+}
+
+/* -- value controls: slider and toggle --------------------- */
+
+.val-slider {
+  width: 110px;
+  vertical-align: middle;
+  accent-color: var(--accent);
+  margin-left: 8px;
+  cursor: pointer;
+}
+
+.val-toggle {
+  appearance: none;
+  width: 34px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--border);
+  position: relative;
+  cursor: pointer;
+  vertical-align: middle;
+  margin-left: 8px;
+  transition: background 0.15s;
+  outline: none;
+}
+
+.val-toggle:checked { background: var(--connected); }
+.val-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.val-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface);
+  transition: left 0.15s;
+}
+
+.val-toggle:checked::after { left: 18px; }
+
+/* -- register table --------------------------------------- */
+
+.reg-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  margin-bottom: 20px;
+}
+
+.reg-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.reg-table th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 2px solid var(--border);
+  background: var(--surface-raised);
+  white-space: nowrap;
+}
+
+.reg-table td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-faint);
+  font-size: 14px;
+  vertical-align: middle;
+}
+
+.reg-table tr:last-child td {
+  border-bottom: none;
+}
+
+.reg-table .col-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.reg-table .col-type,
+.reg-table .col-perm {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.reg-table .col-perm .rw {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.reg-table .col-value {
+  font-family: var(--mono);
+  font-size: 13px;
+  min-width: 90px;
+}
+
+.reg-table .col-desc {
+  color: var(--text-muted);
+  font-size: 13px;
+  max-width: 220px;
+}
+
+.reg-table .col-range {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* editable value cell */
+.val-display {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+}
+
+.val-display.editable {
+  cursor: pointer;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+
+.val-display.editable:hover {
+  background: var(--accent-bg);
+}
+
+.val-edit {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 3px 6px;
+  width: 100px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  outline: none;
+}
+
+.val-flash {
+  animation: flash-ok 0.6s ease;
+}
+
+@keyframes flash-ok {
+  0%, 100% { background: transparent; }
+  30% { background: var(--connected-bg); }
+}
+
+.val-error {
+  animation: flash-err 0.6s ease;
+}
+
+@keyframes flash-err {
+  0%, 100% { background: transparent; }
+  30% { background: var(--error-bg); }
+}
+
+/* -- empty state ------------------------------------------ */
+
+.empty-state {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--text-muted);
+}
+
+.empty-state p {
+  margin-bottom: 4px;
+}
+
+.empty-state .hint {
+  font-size: 13px;
+}
+
+/* -- console ---------------------------------------------- */
+
+.console-section {
+  margin-top: 8px;
+}
+
+.console-toggle {
+  font-family: var(--serif);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.console-toggle:hover { color: var(--text); }
+.console-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.console-toggle .arrow {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+
+.console-toggle .arrow.open { transform: rotate(90deg); }
+
+.console-box {
+  display: none;
+  background: var(--console-bg);
+  border-radius: 6px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.console-box.open { display: block; }
+
+.console-output {
+  padding: 12px 16px;
+  height: 180px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--console-text);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.console-input-row {
+  display: flex;
+  border-top: 1px solid #2A2E34;
+}
+
+.console-prompt {
+  padding: 8px 0 8px 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--console-prompt);
+  user-select: none;
+}
+
+.console-input {
+  flex: 1;
+  padding: 8px 16px 8px 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--console-text);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.console-input::placeholder { color: #555960; }
+
+/* -- tabs -------------------------------------------------- */
+
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-bar button {
+  font-family: var(--serif);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 16px;
+  background: none;
+  color: var(--text-muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+
+.tab-bar button:hover { color: var(--text); }
+.tab-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab-bar button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* -- reference pane ---------------------------------------- */
+
+.ref {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+.ref h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 18px 0 8px;
+}
+
+.ref h2:first-child { margin-top: 0; }
+
+.ref p {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.ref table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0 12px;
+  font-size: 13px;
+}
+
+.ref th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 6px 10px;
+  border-bottom: 2px solid var(--border);
+}
+
+.ref td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-faint);
+  vertical-align: top;
+}
+
+.ref code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-faint);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.ref .md-btn {
+  font-family: var(--serif);
+  font-size: 13px;
+  padding: 5px 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.ref .md-btn:hover { border-color: var(--accent); }
+
+/* -- not-supported banner --------------------------------- */
+
+.not-supported {
+  padding: 16px 20px;
+  background: var(--error-bg);
+  border: 1px solid var(--error);
+  border-radius: 6px;
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+.not-supported strong { color: var(--error); }
+
+@media (prefers-reduced-motion: reduce) {
+  .val-flash, .val-error { animation: none; }
+}
+</style>
+
+<div class="container">
+  <header>
+    <h1>regtable<span>panel</span></h1>
+    <p class="subtitle">Web Serial interface to the register table CLI</p>
+  </header>
+
+  <div id="not-supported" class="not-supported" style="display:none">
+    <strong>Web Serial not available.</strong> Use Chrome or Edge (desktop) with a secure context (localhost or HTTPS).
+  </div>
+
+  <div class="conn-bar">
+    <label for="baud">Baud</label>
+    <select id="baud">
+      <option value="9600">9600</option>
+      <option value="19200">19200</option>
+      <option value="38400">38400</option>
+      <option value="57600">57600</option>
+      <option value="115200" selected>115200</option>
+    </select>
+    <select id="databits" title="data bits">
+      <option value="8" selected>8</option>
+      <option value="7">7</option>
+    </select>
+    <select id="parity" title="parity">
+      <option value="none" selected>N</option>
+      <option value="even">E</option>
+      <option value="odd">O</option>
+    </select>
+    <select id="stopbits" title="stop bits">
+      <option value="1" selected>1</option>
+      <option value="2">2</option>
+    </select>
+    <select id="flow" title="flow control">
+      <option value="none" selected>no flow</option>
+      <option value="hardware">RTS/CTS</option>
+    </select>
+    <button class="conn-btn" id="conn-btn" onclick="toggleConnect()">Connect</button>
+    <div class="conn-status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Disconnected</span>
+    </div>
+  </div>
+
+  <div class="tab-bar">
+    <button class="active" id="tab-regs" onclick="showTab('regs')">Registers</button>
+    <button id="tab-ref" onclick="showTab('ref')">Reference</button>
+  </div>
+
+  <div class="tab-pane active" id="pane-regs">
+  <div class="toolbar" id="toolbar" style="display:none">
+    <button onclick="refreshAll()">Refresh</button>
+    <label class="auto-label">
+      <input type="checkbox" id="auto-poll" onchange="toggleAutoPoll()">
+      Auto-refresh
+    </label>
+    <select id="poll-rate" onchange="pollRateChanged()" title="poll interval">
+      <option value="500">0.5 s</option>
+      <option value="1000" selected>1 s</option>
+      <option value="2000">2 s</option>
+      <option value="5000">5 s</option>
+    </select>
+  </div>
+
+  <div class="reg-table-wrap">
+    <div class="empty-state" id="empty-state">
+      <p>No registers loaded</p>
+      <p class="hint">Connect a serial port to discover the table</p>
+    </div>
+    <table class="reg-table" id="reg-table" style="display:none">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Perm</th>
+          <th>Value</th>
+          <th>Range</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody id="reg-tbody"></tbody>
+    </table>
+  </div>
+
+  </div><!-- /pane-regs -->
+
+  <div class="tab-pane" id="pane-ref">
+    <div class="ref">
+      <h2>Commands</h2>
+      <table>
+        <tr><th>Command</th><th>Does</th><th>Answers</th></tr>
+        <tr><td><code>list</code></td><td>every register with its value</td><td>table, or a JSON array with <code>--json</code></td></tr>
+        <tr><td><code>get &lt;name&gt;</code></td><td>read one value</td><td>the value, or <code>{"value":..}</code></td></tr>
+        <tr><td><code>set &lt;name&gt; &lt;value&gt;</code></td><td>write one value</td><td><code>OK</code> / error, or <code>{"result":"OK"}</code> / <code>{"error":".."}</code></td></tr>
+        <tr><td><code>info &lt;name&gt;</code></td><td>type, permission, range, description</td><td>lines, or one JSON object</td></tr>
+        <tr><td><code>help</code></td><td>this list, from the device itself</td><td>text</td></tr>
+      </table>
+      <p><code>--json</code> may sit anywhere on the line. Argument counts are exact:
+        extras or omissions answer a usage error, never a guess.</p>
+
+      <h2>Values</h2>
+      <table>
+        <tr><th>Type</th><th>Accepted writes</th></tr>
+        <tr><td>U8 / U16 / U32</td><td>decimal or <code>0x</code> hex; a leading zero is still decimal, never octal</td></tr>
+        <tr><td>I8 / I16 / I32</td><td>same, with optional <code>-</code> / <code>+</code></td></tr>
+        <tr><td>FLOAT</td><td><code>1.5</code>, <code>3e2</code>, <code>0.004</code>; <code>nan</code> is invalid, <code>inf</code> is out of range</td></tr>
+        <tr><td>BOOL</td><td><code>true</code> / <code>false</code> in any case, or <code>1</code> / <code>0</code></td></tr>
+      </table>
+
+      <h2>Errors</h2>
+      <p><code>ERR: not found</code> &middot; <code>ERR: read-only</code> &middot;
+         <code>ERR: invalid value</code> &middot; <code>ERR: out of range</code> &middot;
+         <code>ERR: rejected</code> (an on_write hook said no) &middot;
+         <code>ERR: usage: ...</code> &middot; <code>ERR: too many arguments</code> &middot;
+         <code>ERR: line too long</code> (an overlong line is dropped whole, never run truncated)</p>
+
+      <h2>Wire</h2>
+      <p>Lines end with <code>\n</code> or <code>\r</code>. The device echoes every
+         byte back. Backspace (0x08 / 0x7F) edits the line. All of this panel's
+         traffic is those same commands with <code>--json</code>; the Console tab
+         shows the raw exchange.</p>
+
+      <h2>This device</h2>
+      <p id="ref-dev-line">Connect to fill this section from the device's own <code>list --json</code>.</p>
+      <button class="md-btn" onclick="copyMarkdown()">Copy register table as Markdown</button>
+    </div>
+  </div><!-- /pane-ref -->
+
+  <div class="console-section">
+    <button class="console-toggle" onclick="toggleConsole()">
+      <span class="arrow" id="console-arrow">&#9654;</span>
+      Console
+    </button>
+    <div class="console-box" id="console-box">
+      <div class="console-output" id="console-output"></div>
+      <div class="console-input-row">
+        <span class="console-prompt">&gt;</span>
+        <input class="console-input" id="console-input"
+               placeholder="list --json"
+               onkeydown="if(event.key==='Enter')sendConsole()">
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* -- state ------------------------------------------------ */
+let port = null;
+let reader = null;
+let writer = null;
+let pipeDone = null;
+let readBuf = '';
+let connState = 'disconnected';  /* disconnected | opening | ready | closing */
+let connGen = 0;                 /* bumped when a connection attempt dies */
+let registers = [];
+const cells = new Map();         /* register name -> value <td> */
+let pollOn = false;
+let pollLoopRunning = false;
+let pendingResolve = null;
+let pendingTimeout = null;
+let cmdQueue = Promise.resolve();
+
+const $ = id => document.getElementById(id);
+
+/* One command on the wire at a time: auto-poll gets and user sets
+ * share a single response stream, so they must take turns or one
+ * command's reply lands in the other's hands. */
+function enqueue(fn) {
+  const p = cmdQueue.then(fn, fn);
+  cmdQueue = p.catch(() => {});
+  return p;
+}
+
+/* -- serial I/O ------------------------------------------- */
+
+async function openPort() {
+  /* exactly one remembered port reconnects without the chooser;
+   * none or several bring the chooser up, so which device answers
+   * is always explicit */
+  const granted = await navigator.serial.getPorts();
+  const p = granted.length === 1 ? granted[0]
+                                 : await navigator.serial.requestPort();
+  await p.open({
+    baudRate: parseInt($('baud').value),
+    dataBits: parseInt($('databits').value),
+    stopBits: parseInt($('stopbits').value),
+    parity: $('parity').value,
+    flowControl: $('flow').value,
+    bufferSize: 4096,
+  });
+  port = p;
+  writer = p.writable.getWriter();
+  startReading();
+}
+
+/* release everything, in stream-teardown order; safe to call twice */
+async function teardown() {
+  stopAutoPoll();
+  if (reader) { try { await reader.cancel(); } catch (_) {} reader = null; }
+  if (pipeDone) { try { await pipeDone; } catch (_) {} pipeDone = null; }
+  if (writer) { try { writer.releaseLock(); } catch (_) {} writer = null; }
+  if (port) { try { await port.close(); } catch (_) {} port = null; }
+  registers = [];
+  renderTable();
+}
+
+function startReading() {
+  const decoder = new TextDecoderStream();
+  pipeDone = port.readable.pipeTo(decoder.writable).catch(() => {});
+  reader = decoder.readable.getReader();
+  (async () => {
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) onData(value);
+      }
+    } catch (_) {}
+    if (connState === 'ready') {           /* cable gone, not a click */
+      setState('closing');
+      await teardown();
+      setState('disconnected');
+    } else if (connState === 'opening') {
+      /* the opener owns cleanup; its token check sees this */
+      connGen++;
+    }
+  })();
+}
+
+function onData(chunk) {
+  readBuf += chunk;
+  if (pendingResolve && readBuf.includes('\n')) {
+    const idx = readBuf.indexOf('\n');
+    const line = readBuf.slice(0, idx).replace(/\r$/, '');
+    readBuf = readBuf.slice(idx + 1);
+    clearTimeout(pendingTimeout);
+    pendingResolve(line);
+    pendingResolve = null;
+    pendingTimeout = null;
+  }
+}
+
+async function sendRaw(text) {
+  if (!writer) return;
+  const enc = new TextEncoder();
+  await writer.write(enc.encode(text));
+}
+
+function waitLine(timeout = 2000) {
+  return new Promise((resolve, reject) => {
+    if (readBuf.includes('\n')) {
+      const idx = readBuf.indexOf('\n');
+      const line = readBuf.slice(0, idx).replace(/\r$/, '');
+      readBuf = readBuf.slice(idx + 1);
+      resolve(line);
+      return;
+    }
+    pendingResolve = resolve;
+    pendingTimeout = setTimeout(() => {
+      pendingResolve = null;
+      reject(new Error('timeout'));
+    }, timeout);
+  });
+}
+
+/* Send one --json command and return its JSON response line. The
+ * CLI echoes every byte back (regcli echo is on by default) and
+ * reset noise can prefix stray bytes to a line, so instead of
+ * matching the echo, lines are read until one starts like JSON. */
+async function sendCmdGetLine(cmd) {
+  return enqueue(async () => {
+    readBuf = '';
+    await sendRaw(cmd + '\n');
+    for (let i = 0; i < 6; i++) {
+      const line = await waitLine(3000);
+      const c = line.trimStart()[0];
+      if (c === '{' || c === '[') return line.trimStart();
+    }
+    throw new Error('no JSON response');
+  });
+}
+
+/* For the console: the first line answers within the normal
+ * timeout or the command fails loudly; after that, a short quiet
+ * gap ends the (possibly multi-line) response. */
+async function sendCmdGetAll(cmd) {
+  return enqueue(async () => {
+    readBuf = '';
+    await sendRaw(cmd + '\n');
+    let line = await waitLine(3000);               /* throws on silence */
+    if (line === cmd) line = await waitLine(3000); /* the echo */
+    const out = [line];
+    try {
+      for (;;) out.push(await waitLine(200));      /* until quiet */
+    } catch (_) {}
+    return out.join('\n');
+  });
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function drain(ms) {
+  await sleep(ms);
+  readBuf = '';
+}
+
+/* -- commands --------------------------------------------- */
+
+async function refreshAll() {
+  if (connState !== 'ready') return;
+  try {
+    const line = await sendCmdGetLine('list --json');
+    const arr = JSON.parse(line);
+    if (Array.isArray(arr)) {
+      registers = arr;
+      renderTable();
+    }
+  } catch (e) {
+    consoleLog('refresh error: ' + e.message);
+  }
+}
+
+async function setValue(name, value) {
+  if (connState !== 'ready') return false;
+  const cell = cells.get(name);
+  try {
+    const line = await sendCmdGetLine('set ' + name + ' ' + value + ' --json');
+    const obj = JSON.parse(line);
+    if (obj.error) {
+      restoreCell(name);                   /* an edit box must not stay */
+      if (cell) cell.classList.add('val-error');
+      consoleLog('set ' + name + ': ' + obj.error);
+      setTimeout(() => cell && cell.classList.remove('val-error'), 700);
+      return false;
+    }
+    /* re-read to confirm what the device actually stored */
+    const gline = await sendCmdGetLine('get ' + name + ' --json');
+    const gobj = JSON.parse(gline);
+    const reg = registers.find(r => r.name === name);
+    if (reg && gobj.value !== undefined) reg.value = gobj.value;
+    restoreCell(name);
+    if (cell) cell.classList.add('val-flash');
+    setTimeout(() => cell && cell.classList.remove('val-flash'), 700);
+    return true;
+  } catch (e) {
+    restoreCell(name);
+    consoleLog('set error: ' + e.message);
+    return false;
+  }
+}
+
+async function refreshValues() {
+  for (const reg of registers) {
+    if (connState !== 'ready') return;
+    try {
+      const line = await sendCmdGetLine('get ' + reg.name + ' --json');
+      const obj = JSON.parse(line);
+      if (obj.value !== undefined) renderValue(reg.name, obj.value);
+    } catch (_) {}
+  }
+}
+
+/* -- connection state machine ----------------------------- */
+
+function setState(s) {
+  connState = s;
+  const label = {
+    disconnected: 'Disconnected',
+    opening: 'Connecting...',
+    ready: 'Connected',
+    closing: 'Closing...',
+  }[s];
+  $('conn-btn').disabled = (s === 'opening' || s === 'closing');
+  $('conn-btn').textContent = (s === 'ready') ? 'Disconnect' : 'Connect';
+  $('status-dot').className = 'status-dot' + (s === 'ready' ? ' connected' : '');
+  $('status-text').textContent = label;
+  $('toolbar').style.display = (s === 'ready') ? 'flex' : 'none';
+  if (s === 'disconnected') {
+    $('empty-state').style.display = '';
+    $('reg-table').style.display = 'none';
+  }
+}
+
+async function toggleConnect() {
+  if (connState === 'ready') {
+    setState('closing');
+    await teardown();
+    setState('disconnected');
+    return;
+  }
+  if (connState !== 'disconnected') return;   /* mid-transition clicks */
+  setState('opening');
+  const gen = ++connGen;
+  try {
+    await openPort();
+    /* opening the port resets an Arduino (DTR); the bootloader
+     * takes about two seconds before the sketch answers */
+    $('status-text').textContent = 'Waiting for device...';
+    await drain(2000);
+    if (gen !== connGen) throw new Error('device disconnected');
+    setState('ready');
+    await refreshAll();
+    if (!registers.length) {                  /* one retry for slow starters */
+      await drain(1000);
+      if (gen !== connGen) throw new Error('device disconnected');
+      await refreshAll();
+    }
+  } catch (e) {
+    consoleLog('connect: ' + e.message);
+    await teardown();
+    setState('disconnected');
+    $('status-dot').className = 'status-dot error';
+    $('status-text').textContent = 'Failed';
+    setTimeout(() => {
+      if (connState === 'disconnected' &&
+          $('status-text').textContent === 'Failed') {
+        setState('disconnected');
+      }
+    }, 2000);
+  }
+}
+
+/* -- register table (DOM only: device strings never meet
+ *    HTML, JS, or selector syntax) ------------------------- */
+
+function renderTable() {
+  const tbody = $('reg-tbody');
+  tbody.textContent = '';
+  cells.clear();
+  if (!registers.length) {
+    $('empty-state').style.display = '';
+    $('reg-table').style.display = 'none';
+    return;
+  }
+  $('empty-state').style.display = 'none';
+  $('reg-table').style.display = '';
+
+  for (const r of registers) {
+    const tr = document.createElement('tr');
+    const td = cls => {
+      const d = document.createElement('td');
+      d.className = cls;
+      tr.appendChild(d);
+      return d;
+    };
+    td('col-name').textContent = r.name;
+    td('col-type').textContent = r.type;
+    const perm = td('col-perm');
+    if (r.perm === 'RW') {
+      const s = document.createElement('span');
+      s.className = 'rw';
+      s.textContent = 'RW';
+      perm.appendChild(s);
+    } else {
+      perm.textContent = 'RO';
+    }
+    const val = td('col-value');
+    cells.set(r.name, val);
+    buildValCell(val, r);
+    td('col-range').textContent =
+      (r.min !== undefined && r.max !== undefined) ? r.min + '..' + r.max : '';
+    td('col-desc').textContent = r.desc || '';
+    tbody.appendChild(tr);
+  }
+}
+
+function buildValCell(cell, r) {
+  cell.textContent = '';
+  const span = document.createElement('span');
+  span.textContent = formatVal(r.value);
+  cell.appendChild(span);
+
+  if (r.perm !== 'RW') {
+    span.className = 'val-display';
+    return;
+  }
+
+  if (r.type === 'BOOL') {
+    span.className = 'val-display';
+    const t = document.createElement('input');
+    t.type = 'checkbox';
+    t.className = 'val-toggle';
+    t.checked = !!r.value;
+    t.title = 'toggle';
+    t.addEventListener('change', () => {
+      t.blur();                    /* release the cell for the confirm render */
+      setValue(r.name, t.checked);
+    });
+    cell.appendChild(t);
+    return;
+  }
+
+  span.className = 'val-display editable';
+  span.title = 'click to edit';
+  span.addEventListener('click', () => editVal(cell, r.name));
+
+  /* slider: ranged numerics whose span is walkable at step 1;
+   * huge ranges are better typed than dragged */
+  const ranged = r.min !== undefined && r.max !== undefined;
+  if (ranged && (r.type === 'FLOAT' || r.max - r.min <= 1023)) {
+    const sl = document.createElement('input');
+    sl.type = 'range';
+    sl.className = 'val-slider';
+    sl.min = r.min;
+    sl.max = r.max;
+    sl.step = r.type === 'FLOAT' ? 'any' : '1';
+    sl.value = r.value;
+    sl.title = r.min + '..' + r.max;
+    sl.addEventListener('input', () => {
+      span.textContent = formatVal(parseFloat(sl.value));
+    });
+    sl.addEventListener('change', () => {
+      sl.blur();
+      const v = r.type === 'FLOAT' ? exactVal(parseFloat(sl.value)) : sl.value;
+      setValue(r.name, v);
+    });
+    cell.appendChild(sl);
+  }
+}
+
+/* poll-driven update: hands off while the user holds the cell */
+function renderValue(name, value) {
+  const reg = registers.find(r => r.name === name);
+  const cell = cells.get(name);
+  if (!reg || !cell) return;
+  reg.value = value;
+  if (cell.contains(document.activeElement)) return;
+  buildValCell(cell, reg);
+}
+
+/* unconditional rebuild: for edit teardown, where the element being
+ * replaced is the one holding focus */
+function restoreCell(name) {
+  const reg = registers.find(r => r.name === name);
+  const cell = cells.get(name);
+  if (reg && cell) buildValCell(cell, reg);
+}
+
+function formatVal(v) {
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  if (typeof v === 'number') {
+    if (Number.isInteger(v)) return '' + v;
+    return parseFloat(v.toPrecision(7)) + '';
+  }
+  return '' + v;
+}
+
+/* the shortest text that reads back as the same binary32 value:
+ * what goes into the editor and onto the wire. The display may
+ * round for the eye; a written-back value must not. */
+function exactVal(v) {
+  if (typeof v !== 'number' || Number.isInteger(v)) return '' + v;
+  for (let p = 1; p <= 9; p++) {
+    const st = v.toPrecision(p);
+    if (Math.fround(parseFloat(st)) === Math.fround(v)) {
+      return parseFloat(st) + '';
+    }
+  }
+  return '' + v;
+}
+
+function editVal(cell, name) {
+  const reg = registers.find(r => r.name === name);
+  if (!reg) return;
+  const inp = document.createElement('input');
+  inp.className = 'val-edit';
+  inp.value = exactVal(reg.value);
+  inp.addEventListener('keydown', async e => {
+    if (e.key === 'Escape') { restoreCell(name); return; }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const val = inp.value.trim();
+      if (!val) { restoreCell(name); return; }
+      inp.disabled = true;
+      await setValue(name, val);       /* setValue rebuilds the cell */
+    }
+  });
+  inp.addEventListener('blur', () => {
+    if (!inp.disabled) restoreCell(name);
+  });
+  cell.textContent = '';
+  cell.appendChild(inp);
+  inp.focus();
+  inp.select();
+}
+
+/* -- auto-refresh ----------------------------------------- */
+/*  A self-scheduling loop, not setInterval: the next round starts
+ *  only after the previous one finished, so a slow link piles up
+ *  nothing and a user write never queues behind stale gets. */
+
+async function pollLoop() {
+  if (pollLoopRunning) return;
+  pollLoopRunning = true;
+  while (pollOn && connState === 'ready') {
+    await refreshValues();
+    await sleep(parseInt($('poll-rate').value));
+  }
+  pollLoopRunning = false;
+}
+
+function toggleAutoPoll() {
+  pollOn = $('auto-poll').checked;
+  if (pollOn) pollLoop();
+}
+
+function pollRateChanged() {
+  /* the loop reads the rate each round; nothing to restart */
+}
+
+function stopAutoPoll() {
+  pollOn = false;
+  $('auto-poll').checked = false;
+}
+
+/* -- tabs and reference ----------------------------------- */
+
+function showTab(which) {
+  for (const t of ['regs', 'ref']) {
+    $('tab-' + t).classList.toggle('active', t === which);
+    $('pane-' + t).classList.toggle('active', t === which);
+  }
+  if (which === 'ref') {
+    $('ref-dev-line').textContent = registers.length
+      ? registers.length + ' registers discovered; the table on the ' +
+        'Registers tab is this device’s live documentation.'
+      : 'Connect to fill this section from the device’s own list --json.';
+  }
+}
+
+/* the same table the codegen writes to registers.md, taken from
+ * the live device instead of the YAML */
+function copyMarkdown() {
+  if (!registers.length) return;
+  const esc_md = s => ('' + s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+  const lines = [
+    '| Name | Type | Perm | Value | Range | Description |',
+    '| --- | --- | --- | --- | --- | --- |',
+  ];
+  for (const r of registers) {
+    const range = (r.min !== undefined) ? r.min + '..' + r.max : '';
+    lines.push('| `' + r.name + '` | ' + r.type + ' | ' + r.perm + ' | ' +
+      formatVal(r.value) + ' | ' + range + ' | ' + esc_md(r.desc || '') + ' |');
+  }
+  navigator.clipboard.writeText(lines.join('\n') + '\n');
+  consoleLog('(register table copied as markdown)');
+}
+
+/* -- console ---------------------------------------------- */
+
+function toggleConsole() {
+  const box = $('console-box');
+  const arrow = $('console-arrow');
+  const open = box.classList.toggle('open');
+  arrow.classList.toggle('open', open);
+  if (open) $('console-input').focus();
+}
+
+function consoleLog(text) {
+  const out = $('console-output');
+  out.textContent += text + '\n';
+  out.scrollTop = out.scrollHeight;
+}
+
+async function sendConsole() {
+  const inp = $('console-input');
+  const cmd = inp.value.trim();
+  if (!cmd || connState !== 'ready') return;
+  inp.value = '';
+  consoleLog('> ' + cmd);
+  try {
+    const text = await sendCmdGetAll(cmd);
+    consoleLog(text);
+    try {
+      const obj = JSON.parse(text);
+      if (Array.isArray(obj)) {
+        registers = obj;
+        renderTable();
+      }
+    } catch (_) {}
+  } catch (e) {
+    consoleLog('error: ' + e.message);
+  }
+}
+
+/* -- init ------------------------------------------------- */
+
+if (!('serial' in navigator)) {
+  $('not-supported').style.display = '';
+  $('conn-btn').disabled = true;
+}
+</script>
