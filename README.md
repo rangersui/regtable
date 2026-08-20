@@ -9,6 +9,7 @@ A table of named registers (C variables plus selected hardware peripherals) is e
 - **Serial CLI** `get temp`, `set led true`, `info interval`, `list`, all with `--json`
 - **Modbus RTU / TCP** any SCADA / HMI / PLC master can read/write
 - **MQTT** publish state, subscribe to commands
+- **YAML codegen** one description generates the C table and its documentation
 - **MCP** AI agents operate the device (planned)
 - **Web UI** browser connects via Web Serial / Web Bluetooth (planned)
 
@@ -241,6 +242,25 @@ A `/set` is a one-shot command and is published with the retain flag clear: a re
 Change detection is a shadow array: the raw value last accepted by `publish()`, one per entry. The pair works like a transactional outbox with the difference as the pending entry: `publish()` returning non-zero leaves the shadow alone and the next poll retries, payloads are absolute values so repeats are harmless, and `regmqtt_publish_all` after a reconnect resends everything. The dirty bitmap and `on_change` stay the application's; the adapter compares values instead, so both consumers see every write without stealing from each other. A change that reverts between two polls publishes nothing: `on_change` answers "did something happen", the shadow answers "is the net value out of sync".
 
 [example_mqtt_desktop.c](example_mqtt_desktop.c) shows the pipeline with stdout standing in for the broker (`make run-mqtt`); [examples/arduino_mqtt/arduino_mqtt.ino](examples/arduino_mqtt/arduino_mqtt.ino) is the real-client integration with PubSubClient, an Ethernet shield, and a last-will `status` topic (compile-verified, like the Arduino TCP sketch).
+
+## YAML codegen
+
+[tools/regtable_gen.py](tools/regtable_gen.py) turns one YAML description into three projections of the same table: `registers.c` (storage and the `RegEntry[]`), `registers.h` (externs and hook prototypes; hook bodies stay in application code), and `registers.md` (the documentation table).
+
+```yaml
+device: demo
+registers:
+  - name: interval
+    type: u16
+    perm: rw
+    init: 1000
+    min: 100
+    max: 60000
+    modbus: 3
+    desc: Sampling interval, ms
+```
+
+Every constraint the adapters enforce at init time is checked at generation time instead: duplicate names, Modbus word overlaps and widths, MQTT topic rules on names, ranges against the type's domain, hooks on registers that could never run them. A bad table fails before it compiles. `make codegen` generates from [tools/example.yaml](tools/example.yaml), compiles the output with `-Werror`, and runs a smoke test against it.
 
 ## Atomicity
 

@@ -1,0 +1,59 @@
+# The desktop example's table, described once. regtable_gen.py turns
+# this into registers.c (storage + table), registers.h (externs +
+# hook prototypes), and registers.md (documentation).
+
+device: demo
+registers:
+  - name: temp
+    type: float
+    perm: ro
+    init: 23.4
+    desc: Water temperature, Celsius
+    modbus: 1
+
+  - name: interval
+    type: u16
+    perm: rw
+    init: 1000
+    min: 100
+    max: 60000
+    modbus: 3
+    desc: Sampling interval, ms
+
+  - name: led
+    type: bool
+    perm: rw
+    modbus: 4
+    hooks:
+      on_change: led_changed
+    desc: Status LED
+
+  - name: offset
+    type: i16
+    perm: rw
+    min: -50
+    max: 50
+    desc: Calibration offset, signed
+
+  - name: gain
+    type: float
+    perm: rw
+    init: 1.0
+    min: 0.5
+    max: 2.5
+    modbus: 5
+    desc: Sensor gain multiplier
+
+  - name: pump
+    type: bool
+    perm: rw
+    hooks:
+      on_write: pump_check
+    desc: Pump on/off
+
+  - name: voltage
+    type: float
+    perm: ro
+    hooks:
+      on_read: voltage_read
+    desc: Supply voltage from ADC

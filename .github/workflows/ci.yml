@@ -87,6 +87,14 @@ jobs:
             -Isrc -o mqtest regtable_mqtt_test.c src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c src/regtable_mqtt.c -lm
           ./mqtest
 
+  # YAML -> C table -> compile -> run, plus the validator rejections
+  codegen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install pyyaml
+      - run: make codegen
+
   # coverage-guided search on the CLI byte path
   fuzz:
     runs-on: ubuntu-latest

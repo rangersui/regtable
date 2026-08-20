@@ -5,6 +5,7 @@
 #   make test     build and run the regression test
 #   make run-tcp  build and start the desktop Modbus TCP slave example
 #   make run-mqtt build and start the desktop MQTT demo (stdout broker)
+#   make codegen  generate a table from tools/example.yaml and test it
 #   make strict   rebuild everything with -Werror and run the test
 #   make fuzz     libFuzzer + ASan/UBSan on the CLI byte path (needs clang)
 #   make fuzz-mb  same, on the Modbus RTU frame path
@@ -31,10 +32,12 @@ ifeq ($(OS),Windows_NT)
   EXE    := .exe
   LIBM   :=
   LIBNET := -lws2_32
+  PY     ?= python
 else
   EXE    :=
   LIBM   := -lm
   LIBNET :=
+  PY     ?= python3
 endif
 RM := rm -f
 
@@ -45,7 +48,7 @@ TEST    = regtest$(EXE)
 MBTEST  = mbtest$(EXE)
 MQTEST  = mqtest$(EXE)
 
-.PHONY: all run run-tcp run-mqtt test strict fuzz fuzz-mb clean
+.PHONY: all run run-tcp run-mqtt test strict codegen fuzz fuzz-mb clean
 
 all: $(EXAMPLE) $(TEST) $(MBTEST) $(MQTEST) $(TCPSLAVE) $(MQTTDEMO)
 
@@ -88,6 +91,18 @@ test: $(TEST) $(MBTEST) $(MQTEST)
 	./$(MBTEST)
 	./$(MQTEST)
 
+# The validator rejection suite, then YAML -> registers.c/.h/.md,
+# then compile and run the smoke test against the generated table.
+# Needs python with PyYAML.
+codegen:
+	$(PY) tools/gen_test.py
+	$(PY) tools/regtable_gen.py tools/example.yaml -o gen
+	$(CC) $(CFLAGS) -Werror -Igen -o gen/smoke$(EXE) \
+	    tools/gen_smoke.c gen/registers.c $(LIB_SRC) $(LIBM)
+	./gen/smoke$(EXE)
+	g++ -x c++ -std=c++11 -Wall -Wextra -Werror -Isrc -Igen \
+	    -c tools/gen_smoke.c -o gen/smoke_cxx.o
+
 # Coverage-guided search for inputs the regression test did not think
 # of. Seeds a corpus with a few valid lines, then runs for FUZZ_TIME
 # seconds. Crashes land in the working directory as crash-* files.
@@ -117,4 +132,4 @@ fuzz-mb: regtable_modbus_fuzz.c $(LIB_SRC) $(LIB_HDR)
 
 clean:
 	-$(RM) $(EXAMPLE) $(TEST) $(MBTEST) $(MQTEST) $(TCPSLAVE) $(MQTTDEMO) $(FUZZ) $(FUZZMB) fuzz.lib fuzz.exp fuzz.pdb fuzz_mb.lib fuzz_mb.exp fuzz_mb.pdb
-	-$(RM) -r corpus corpus_mb crash-* leak-* timeout-*
+	-$(RM) -r corpus corpus_mb gen crash-* leak-* timeout-*
