@@ -79,6 +79,10 @@ The repo is laid out as an Arduino library (`library.properties`, `src/`, `examp
 
 A second sketch, [examples/arduino_modbus/arduino_modbus.ino](examples/arduino_modbus/arduino_modbus.ino), serves the same registers as a Modbus RTU slave (address 1, 115200) instead of a CLI: point QModMaster or pymodbus at the Uno's COM port and read word 2 for A0, words 3-4 for uptime, write word 1 for the LED. It also shows what t3.5 frame collection looks like on Arduino: a `micros()` gap check.
 
+Opening the COM port resets the Uno (DTR is wired to reset), and the bootloader takes about two seconds before the sketch runs. A request sent in that window gets no answer, so the first poll after connecting times out. Wait two seconds after opening the port, or let the master's automatic retry handle it; this applies to the CLI sketch the same way, where the symptom is just a missed first keystroke.
+
+A third sketch, [examples/arduino_modbus_tcp/arduino_modbus_tcp.ino](examples/arduino_modbus_tcp/arduino_modbus_tcp.ino), is the same slave over Modbus TCP for boards with an Ethernet shield (W5100/W5500): static IP, port 502, MBAP framing instead of t3.5 silence. This one is compile-verified only; the CLI and RTU sketches are verified on hardware.
+
 On AVR (Uno, Nano, Mega) `printf` has no float support unless the sketch is linked with `-lprintf_flt`, so FLOAT registers print as `?` there; integer and BOOL registers work as-is. On 32-bit Arduino boards (SAMD, RP2040, ESP32) FLOAT works. AVR also keeps `const` data in RAM (regtable does not use PROGMEM), so the table costs a few dozen bytes per entry there.
 
 ## Quick start on the MCU

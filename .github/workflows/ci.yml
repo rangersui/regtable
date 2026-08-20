@@ -62,8 +62,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: arduino/setup-arduino-cli@v2
       - run: arduino-cli core update-index && arduino-cli core install arduino:avr
+      - run: arduino-cli lib install Ethernet
       - run: arduino-cli compile --fqbn arduino:avr:uno --library . --warnings all examples/arduino
       - run: arduino-cli compile --fqbn arduino:avr:uno --library . --warnings all examples/arduino_modbus
+      - run: arduino-cli compile --fqbn arduino:avr:uno --library . --warnings all examples/arduino_modbus_tcp
 
   # runtime checks: memory errors and undefined behaviour under the test
   sanitizers:
