@@ -3,6 +3,7 @@
 #   make          build example and test
 #   make run      build and start the interactive example
 #   make test     build and run the regression test
+#   make run-tcp  build and start the desktop Modbus TCP slave example
 #   make strict   rebuild everything with -Werror and run the test
 #   make fuzz     libFuzzer + ASan/UBSan on the CLI byte path (needs clang)
 #   make fuzz-mb  same, on the Modbus RTU frame path
@@ -26,25 +27,30 @@ LIB_HDR  = src/regtable_core.h src/regtable_cli.h src/regtable_modbus.h
 # -lm only off Windows: there the math functions are in the CRT and
 # MSVC-target clang has no m.lib.
 ifeq ($(OS),Windows_NT)
-  EXE  := .exe
-  LIBM :=
+  EXE    := .exe
+  LIBM   :=
+  LIBNET := -lws2_32
 else
-  EXE  :=
-  LIBM := -lm
+  EXE    :=
+  LIBM   := -lm
+  LIBNET :=
 endif
 RM := rm -f
 
 EXAMPLE = example$(EXE)
+TCPSLAVE = tcpslave$(EXE)
 TEST    = regtest$(EXE)
 MBTEST  = mbtest$(EXE)
 
-.PHONY: all run test strict fuzz fuzz-mb clean
+.PHONY: all run run-tcp test strict fuzz fuzz-mb clean
 
-all: $(EXAMPLE) $(TEST) $(MBTEST)
+all: $(EXAMPLE) $(TEST) $(MBTEST) $(TCPSLAVE)
 
-# warnings become errors; forces a full rebuild so nothing stale slips by
+# warnings become errors; forces a full rebuild of everything (examples
+# included) so nothing stale or unbuilt slips by
 strict:
 	$(MAKE) clean
+	$(MAKE) all CFLAGS="$(CFLAGS) -Werror"
 	$(MAKE) test CFLAGS="$(CFLAGS) -Werror"
 
 $(EXAMPLE): example_desktop.c $(LIB_SRC) $(LIB_HDR)
@@ -58,6 +64,12 @@ $(MBTEST): regtable_modbus_test.c $(LIB_SRC) $(LIB_HDR)
 
 run: $(EXAMPLE)
 	./$(EXAMPLE)
+
+run-tcp: $(TCPSLAVE)
+	./$(TCPSLAVE)
+
+$(TCPSLAVE): example_modbus_tcp.c $(LIB_SRC) $(LIB_HDR)
+	$(CC) $(CFLAGS) -o $@ example_modbus_tcp.c $(LIB_SRC) $(LIBM) $(LIBNET)
 
 test: $(TEST) $(MBTEST)
 	./$(TEST)
@@ -91,5 +103,5 @@ fuzz-mb: regtable_modbus_fuzz.c $(LIB_SRC) $(LIB_HDR)
 	./$(FUZZMB) corpus_mb -max_len=260 -max_total_time=$(FUZZ_TIME)
 
 clean:
-	-$(RM) $(EXAMPLE) $(TEST) $(MBTEST) $(FUZZ) $(FUZZMB) fuzz.lib fuzz.exp fuzz.pdb fuzz_mb.lib fuzz_mb.exp fuzz_mb.pdb
+	-$(RM) $(EXAMPLE) $(TEST) $(MBTEST) $(TCPSLAVE) $(FUZZ) $(FUZZMB) fuzz.lib fuzz.exp fuzz.pdb fuzz_mb.lib fuzz_mb.exp fuzz_mb.pdb
 	-$(RM) -r corpus corpus_mb crash-* leak-* timeout-*

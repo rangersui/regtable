@@ -63,17 +63,20 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         regmb_init(&mb, &table, 1);
         ready = true;
     }
-    if (size > REGMB_FRAME_MAX) return 0;
+    if (size > REGMB_TCP_ADU_MAX) return 0;
 
-    uint8_t resp[REGMB_FRAME_MAX];
+    /* sized for the largest legal response on either envelope */
+    uint8_t resp[REGMB_TCP_ADU_MAX];
 
     /* raw: mostly rejected at the CRC gate, occasionally not */
     mb.word_swap = false;
-    regmb_process(&mb, data, (uint16_t)size, resp, sizeof(resp));
+    if (size <= REGMB_FRAME_MAX) {
+        regmb_process(&mb, data, (uint16_t)size, resp, sizeof(resp));
+    }
 
     /* CRC fixed up: the parser sees every input */
     if (size >= 2 && size + 2 <= REGMB_FRAME_MAX) {
-        uint8_t frame[REGMB_FRAME_MAX];
+        uint8_t frame[REGMB_FRAME_MAX];   /* CRC-fixed RTU stays within 256 */
         memcpy(frame, data, size);
         uint16_t crc = regmb_crc16(frame, (uint16_t)size);
         frame[size]     = (uint8_t)crc;
@@ -81,6 +84,23 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         mb.word_swap = (size & 1);
         regmb_process(&mb, frame, (uint16_t)(size + 2), resp, sizeof(resp));
     }
+
+    /* TCP path: MBAP with the protocol id and length made valid,
+     * so the fuzzer reaches the PDU behind the envelope checks */
+    if (size >= 2 && size + 7 <= REGMB_TCP_ADU_MAX) {
+        uint8_t adu[REGMB_TCP_ADU_MAX];
+        adu[0] = (uint8_t)size;            /* transaction id: anything */
+        adu[1] = data[0];
+        adu[2] = 0;                        /* protocol id 0 */
+        adu[3] = 0;
+        adu[4] = (uint8_t)((size + 1) >> 8);
+        adu[5] = (uint8_t)(size + 1);      /* unit id + PDU */
+        adu[6] = data[size - 1];           /* unit id: anything */
+        memcpy(adu + 7, data, size);
+        regmb_process_tcp(&mb, adu, (uint16_t)(size + 7), resp, sizeof(resp));
+    }
+    /* and raw: the envelope checks themselves */
+    regmb_process_tcp(&mb, data, (uint16_t)size, resp, sizeof(resp));
 
     reg_poll(&table);
     return 0;

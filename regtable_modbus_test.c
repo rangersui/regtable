@@ -466,6 +466,69 @@ static void test_top_address(void)
     CHECK(top == 0x9ABC);
 }
 
+/* -- Modbus TCP: same PDU, MBAP envelope -------------------- */
+
+static uint16_t tcp(const uint8_t *adu, uint16_t len)
+{
+    memset(resp, 0xAA, sizeof(resp));
+    return regmb_process_tcp(&mb, adu, len, resp, sizeof(resp));
+}
+
+static void test_tcp(void)
+{
+    /* write interval = 1000: response echoes the whole ADU */
+    static const uint8_t w[] = { 0xAB, 0xCD, 0x00, 0x00, 0x00, 0x06, 0xFF,
+                                 0x06, 0x00, 0x01, 0x03, 0xE8 };
+    uint16_t n = tcp(w, sizeof(w));
+    CHECK(n == sizeof(w) && memcmp(resp, w, n) == 0);
+    CHECK(interval == 1000);
+
+    /* read it back: transaction and unit ids echoed, length computed */
+    static const uint8_t r[] = { 0x01, 0x02, 0x00, 0x00, 0x00, 0x06, 0x11,
+                                 0x03, 0x00, 0x01, 0x00, 0x01 };
+    static const uint8_t want[] = { 0x01, 0x02, 0x00, 0x00, 0x00, 0x05, 0x11,
+                                    0x03, 0x02, 0x03, 0xE8 };
+    n = tcp(r, sizeof(r));
+    CHECK(n == sizeof(want) && memcmp(resp, want, n) == 0);
+
+    /* unit id 0 is also accepted and echoed (TCP guide remark) */
+    static const uint8_t r0[] = { 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x00,
+                                  0x03, 0x00, 0x01, 0x00, 0x01 };
+    n = tcp(r0, sizeof(r0));
+    CHECK(n == 11 && resp[6] == 0x00 && resp[7] == 0x03);
+
+    /* exceptions travel the same envelope */
+    static const uint8_t rbad[] = { 0x00, 0x02, 0x00, 0x00, 0x00, 0x06, 0xFF,
+                                    0x03, 0x00, 0x20, 0x00, 0x01 };
+    static const uint8_t wantx[] = { 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0xFF,
+                                     0x83, 0x02 };
+    n = tcp(rbad, sizeof(rbad));
+    CHECK(n == sizeof(wantx) && memcmp(resp, wantx, n) == 0);
+
+    static const uint8_t wro[] = { 0x00, 0x03, 0x00, 0x00, 0x00, 0x06, 0xFF,
+                                   0x06, 0x00, 0x10, 0x00, 0x07 };
+    n = tcp(wro, sizeof(wro));
+    CHECK(n == 9 && resp[7] == 0x86 && resp[8] == 0x04);
+    CHECK(rom == 42);
+
+    /* MBAP the guide says to discard: wrong protocol id, length
+     * disagreeing with the data, runt ADU */
+    static const uint8_t badpid[] = { 0x00, 0x04, 0x00, 0x01, 0x00, 0x06, 0xFF,
+                                      0x03, 0x00, 0x01, 0x00, 0x01 };
+    CHECK(tcp(badpid, sizeof(badpid)) == 0);
+    static const uint8_t badlen[] = { 0x00, 0x05, 0x00, 0x00, 0x00, 0x09, 0xFF,
+                                      0x03, 0x00, 0x01, 0x00, 0x01 };
+    CHECK(tcp(badlen, sizeof(badlen)) == 0);
+    CHECK(tcp(w, 7) == 0);
+
+    /* a write whose response cannot be delivered must not happen */
+    uint8_t tiny[11];
+    static const uint8_t w2[] = { 0x00, 0x06, 0x00, 0x00, 0x00, 0x06, 0xFF,
+                                  0x06, 0x00, 0x01, 0x01, 0xF4 };
+    CHECK(regmb_process_tcp(&mb, w2, sizeof(w2), tiny, sizeof(tiny)) == 0);
+    CHECK(interval == 1000);
+}
+
 /* -- main --------------------------------------------------- */
 
 int main(void)
@@ -483,6 +546,7 @@ int main(void)
     test_unsupported();
     test_resp_cap();
     test_top_address();
+    test_tcp();
 
     if (failures) {
         printf("%d of %d checks FAILED\n", failures, cases);

@@ -7,7 +7,7 @@ Expose any Cortex-M MCU's state the way a PLC exposes its registers: one registe
 A table of named registers (C variables plus selected hardware peripherals) is exposed through:
 
 - **Serial CLI** `get temp`, `set led true`, `info interval`, `list`, all with `--json`
-- **Modbus RTU** any SCADA / HMI / PLC master can read/write
+- **Modbus RTU / TCP** any SCADA / HMI / PLC master can read/write
 - **MQTT** publish state, subscribe to commands (planned)
 - **MCP** AI agents operate the device (planned)
 - **Web UI** browser connects via Web Serial / Web Bluetooth (planned)
@@ -177,9 +177,9 @@ desc:   Sampling interval in ms
 
 `--json` works on `list`, `get`, `set` and `info`: `list --json` returns the whole table as one array, `get` and `set` answer with one small object, errors come back as `{"error":"..."}`. A host program (an MCP server, a Web UI, a test script) can discover every register, its type, its limits, and its description from the device itself, then drive it in the same format.
 
-## Modbus RTU
+## Modbus
 
-The Modbus adapter is a slave: one received frame in, one response frame out.
+The Modbus adapter is a slave: one received frame in, one response frame out. RTU and TCP share the same PDU handling and the same register map; only the envelope differs.
 
 ```c
 #include "regtable_modbus.h"
@@ -202,6 +202,8 @@ An entry joins the Modbus map by setting `modbus_addr`, its word address: one wo
 - CRC-16 is checked inside `regmb_process`; a bad frame is dropped silently, per the spec. Broadcasts (address 0) apply writes and are never answered.
 
 Frame boundary detection (the t3.5 silence) belongs to platform code: a UART idle interrupt on STM32, a `micros()` gap check on Arduino, an inter-byte timeout on a desktop serial port. The adapter itself runs no timers and does no I/O.
+
+For Modbus TCP, `regmb_process_tcp` takes one ADU (the 7-byte MBAP header plus the PDU, read off the stream using the header's length field), echoes the transaction and unit identifiers, and answers on the same map. There is no CRC and no broadcast on TCP; an ADU the messaging guide says to discard (wrong protocol id, disagreeing length) returns 0. [example_modbus_tcp.c](example_modbus_tcp.c) is a desktop slave on 127.0.0.1:1502: `make run-tcp` (or `.\build tcpslave`, then `.\tcpslave`), then point QModMaster (TCP mode) or pymodbus at it, no board or serial port involved.
 
 `list --json` on the CLI shows each entry's `modbus` address, so a host can discover the register map from the device itself.
 

@@ -22,3 +22,5 @@ fuzz_mb.lib
 fuzz_mb.exp
 fuzz_mb.pdb
 corpus_mb/
+tcpslave
+tcpslave.exe

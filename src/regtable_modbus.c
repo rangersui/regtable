@@ -106,100 +106,88 @@ static uint32_t words_to_raw(const RegModbus *mb, const RegEntry *e,
     return ((uint32_t)hi << 16) | lo;
 }
 
-/* -- response assembly ------------------------------------- */
+/* -- PDU layer --------------------------------------------- */
+/*  The PDU (function code + data) is identical on RTU and TCP;
+ *  only the envelope differs. Handlers read the request PDU and
+ *  write the response PDU into out (pcap bytes available),
+ *  returning its length. 0 = nothing to send: a response that
+ *  does not fit, or a broadcast. */
 
-static uint16_t finish(uint8_t *resp, uint16_t len, uint16_t cap)
+static uint16_t pdu_exception(uint8_t *out, uint16_t pcap,
+                              uint8_t fc, uint8_t code)
 {
-    if ((uint16_t)(len + 2) > cap) return 0;
-    uint16_t crc = regmb_crc16(resp, len);
-    resp[len]     = (uint8_t)crc;          /* low byte first */
-    resp[len + 1] = (uint8_t)(crc >> 8);
-    return (uint16_t)(len + 2);
+    if (pcap < 2) return 0;
+    out[0] = (uint8_t)(fc | 0x80);
+    out[1] = code;
+    return 2;
 }
-
-static uint16_t exception(uint8_t *resp, uint16_t cap,
-                          uint8_t addr, uint8_t fc, uint8_t code)
-{
-    if (cap < 5) return 0;
-    resp[0] = addr;
-    resp[1] = (uint8_t)(fc | 0x80);
-    resp[2] = code;
-    return finish(resp, 3, cap);
-}
-
-/* -- function code handlers -------------------------------- */
-/*  Each returns the response length, or fills in an exception.
- *  pdu points at the function code byte; plen counts from there
- *  to the end of the data (CRC already stripped). */
 
 static uint16_t do_read(RegModbus *mb, const uint8_t *pdu, uint16_t plen,
-                        uint8_t *resp, uint16_t cap)
+                        uint8_t *out, uint16_t pcap)
 {
     uint8_t fc = pdu[0];
     if (plen != 5) {
-        return exception(resp, cap, mb->addr, fc, EXC_ILLEGAL_VALUE);
+        return pdu_exception(out, pcap, fc, EXC_ILLEGAL_VALUE);
     }
     uint16_t start = (uint16_t)((pdu[1] << 8) | pdu[2]);
     uint16_t qty   = (uint16_t)((pdu[3] << 8) | pdu[4]);
 
     if (qty < 1 || qty > MAX_READ_QTY) {
-        return exception(resp, cap, mb->addr, fc, EXC_ILLEGAL_VALUE);
+        return pdu_exception(out, pcap, fc, EXC_ILLEGAL_VALUE);
     }
     if (!span_covered(mb->table, start, qty)) {
-        return exception(resp, cap, mb->addr, fc, EXC_ILLEGAL_ADDRESS);
+        return pdu_exception(out, pcap, fc, EXC_ILLEGAL_ADDRESS);
     }
-    if ((uint16_t)(3 + 2 * qty + 2) > cap) return 0;
+    if ((uint16_t)(2 + 2 * qty) > pcap) return 0;
 
-    resp[0] = mb->addr;
-    resp[1] = fc;
-    resp[2] = (uint8_t)(2 * qty);
+    out[0] = fc;
+    out[1] = (uint8_t)(2 * qty);
     uint32_t addr = start;          /* 32-bit: 0xFFFF + 1 must not wrap */
-    uint8_t *out = resp + 3;
+    uint8_t *p = out + 2;
     while (addr < (uint32_t)start + qty) {
         const RegEntry *e = entry_at(mb->table, (uint16_t)addr);
         uint32_t raw = 0;
         reg_get_raw(e, &raw);              /* runs on_read */
-        raw_to_words(mb, e, raw, out);
-        out  += 2 * entry_words(e);
+        raw_to_words(mb, e, raw, p);
+        p    += 2 * entry_words(e);
         addr += entry_words(e);
     }
-    return finish(resp, (uint16_t)(3 + 2 * qty), cap);
+    return (uint16_t)(2 + 2 * qty);
 }
 
 static uint16_t do_write_single(RegModbus *mb, const uint8_t *pdu, uint16_t plen,
-                                uint8_t *resp, uint16_t cap, bool broadcast)
+                                uint8_t *out, uint16_t pcap, bool broadcast)
 {
     if (plen != 5) {
-        return exception(resp, cap, mb->addr, pdu[0], EXC_ILLEGAL_VALUE);
+        return pdu_exception(out, pcap, pdu[0], EXC_ILLEGAL_VALUE);
     }
     uint16_t addr = (uint16_t)((pdu[1] << 8) | pdu[2]);
 
     const RegEntry *e = entry_at(mb->table, addr);
     if (!e || entry_words(e) != 1) {
         /* no entry here, or one word of a two-word value */
-        return exception(resp, cap, mb->addr, pdu[0], EXC_ILLEGAL_ADDRESS);
+        return pdu_exception(out, pcap, pdu[0], EXC_ILLEGAL_ADDRESS);
     }
     /* the response must be deliverable before any state changes:
      * a write the master cannot hear about must not happen */
-    if (!broadcast && cap < 8) return 0;
+    if (!broadcast && pcap < 5) return 0;
 
     uint32_t raw = words_to_raw(mb, e, pdu + 3);
     if (reg_set_raw(mb->table, e, raw) != REG_OK) {
-        return exception(resp, cap, mb->addr, pdu[0], EXC_DEVICE_FAILURE);
+        return pdu_exception(out, pcap, pdu[0], EXC_DEVICE_FAILURE);
     }
     if (broadcast) return 0;
 
     /* normal response echoes the request */
-    resp[0] = mb->addr;
-    for (int i = 0; i < 5; i++) resp[1 + i] = pdu[i];
-    return finish(resp, 6, cap);
+    for (int i = 0; i < 5; i++) out[i] = pdu[i];
+    return 5;
 }
 
 static uint16_t do_write_multiple(RegModbus *mb, const uint8_t *pdu, uint16_t plen,
-                                  uint8_t *resp, uint16_t cap, bool broadcast)
+                                  uint8_t *out, uint16_t pcap, bool broadcast)
 {
     if (plen < 6) {
-        return exception(resp, cap, mb->addr, pdu[0], EXC_ILLEGAL_VALUE);
+        return pdu_exception(out, pcap, pdu[0], EXC_ILLEGAL_VALUE);
     }
     uint16_t start = (uint16_t)((pdu[1] << 8) | pdu[2]);
     uint16_t qty   = (uint16_t)((pdu[3] << 8) | pdu[4]);
@@ -207,14 +195,13 @@ static uint16_t do_write_multiple(RegModbus *mb, const uint8_t *pdu, uint16_t pl
 
     if (qty < 1 || qty > MAX_WRITE_QTY || bytes != 2 * qty ||
         plen != (uint16_t)(6 + bytes)) {
-        return exception(resp, cap, mb->addr, pdu[0], EXC_ILLEGAL_VALUE);
+        return pdu_exception(out, pcap, pdu[0], EXC_ILLEGAL_VALUE);
     }
     if (!span_covered(mb->table, start, qty)) {
-        return exception(resp, cap, mb->addr, pdu[0], EXC_ILLEGAL_ADDRESS);
+        return pdu_exception(out, pcap, pdu[0], EXC_ILLEGAL_ADDRESS);
     }
-    /* the response must be deliverable before any state changes:
-     * a write the master cannot hear about must not happen */
-    if (!broadcast && cap < 8) return 0;
+    /* the response must be deliverable before any state changes */
+    if (!broadcast && pcap < 5) return 0;
 
     /* apply entry by entry; the first refused write stops the scan
      * and answers exception 04, values already stored stay stored */
@@ -224,21 +211,37 @@ static uint16_t do_write_multiple(RegModbus *mb, const uint8_t *pdu, uint16_t pl
         const RegEntry *e = entry_at(mb->table, (uint16_t)addr);
         uint32_t raw = words_to_raw(mb, e, in);
         if (reg_set_raw(mb->table, e, raw) != REG_OK) {
-            return exception(resp, cap, mb->addr, pdu[0], EXC_DEVICE_FAILURE);
+            return pdu_exception(out, pcap, pdu[0], EXC_DEVICE_FAILURE);
         }
         in   += 2 * entry_words(e);
         addr += entry_words(e);
     }
     if (broadcast) return 0;
 
-    if (cap < 8) return 0;
-    resp[0] = mb->addr;
-    resp[1] = pdu[0];
-    resp[2] = pdu[1];
-    resp[3] = pdu[2];
-    resp[4] = pdu[3];
-    resp[5] = pdu[4];
-    return finish(resp, 6, cap);
+    out[0] = pdu[0];
+    out[1] = pdu[1];
+    out[2] = pdu[2];
+    out[3] = pdu[3];
+    out[4] = pdu[4];
+    return 5;
+}
+
+static uint16_t pdu_handle(RegModbus *mb, const uint8_t *pdu, uint16_t plen,
+                           uint8_t *out, uint16_t pcap, bool broadcast)
+{
+    switch (pdu[0]) {
+    case FC_READ_HOLDING:
+    case FC_READ_INPUT:
+        if (broadcast) return 0;           /* broadcasts are writes only */
+        return do_read(mb, pdu, plen, out, pcap);
+    case FC_WRITE_SINGLE:
+        return do_write_single(mb, pdu, plen, out, pcap, broadcast);
+    case FC_WRITE_MULTIPLE:
+        return do_write_multiple(mb, pdu, plen, out, pcap, broadcast);
+    default:
+        if (broadcast) return 0;
+        return pdu_exception(out, pcap, pdu[0], EXC_ILLEGAL_FUNCTION);
+    }
 }
 
 /* -- public API -------------------------------------------- */
@@ -281,26 +284,44 @@ uint16_t regmb_process(RegModbus *mb, const uint8_t *frame, uint16_t len,
     bool broadcast = (frame[0] == 0);
     if (!broadcast && frame[0] != mb->addr) return 0;
 
-    const uint8_t *pdu = frame + 1;
-    uint16_t plen = (uint16_t)(len - 3);   /* fc + data, without crc */
-    uint8_t fc = pdu[0];
+    /* envelope: addr before the PDU, CRC after it */
+    uint16_t pcap = (resp_cap > 3) ? (uint16_t)(resp_cap - 3) : 0;
+    uint16_t n = pdu_handle(mb, frame + 1, (uint16_t)(len - 3),
+                            resp + 1, pcap, broadcast);
+    if (n == 0 || broadcast) return 0;
 
-    switch (fc) {
-    case FC_READ_HOLDING:
-    case FC_READ_INPUT:
-        if (broadcast) return 0;           /* broadcasts are writes only */
-        return do_read(mb, pdu, plen, resp, resp_cap);
-    case FC_WRITE_SINGLE: {
-        /* a broadcast is never answered, not even with an exception */
-        uint16_t n = do_write_single(mb, pdu, plen, resp, resp_cap, broadcast);
-        return broadcast ? 0 : n;
-    }
-    case FC_WRITE_MULTIPLE: {
-        uint16_t n = do_write_multiple(mb, pdu, plen, resp, resp_cap, broadcast);
-        return broadcast ? 0 : n;
-    }
-    default:
-        if (broadcast) return 0;
-        return exception(resp, resp_cap, mb->addr, fc, EXC_ILLEGAL_FUNCTION);
-    }
+    resp[0] = mb->addr;
+    uint16_t out_crc = regmb_crc16(resp, (uint16_t)(1 + n));
+    resp[1 + n]     = (uint8_t)out_crc;    /* low byte first */
+    resp[2 + n]     = (uint8_t)(out_crc >> 8);
+    return (uint16_t)(n + 3);
+}
+
+uint16_t regmb_process_tcp(RegModbus *mb, const uint8_t *adu, uint16_t len,
+                           uint8_t *resp, uint16_t resp_cap)
+{
+    /* MBAP(7) + at least a function code */
+    if (len < 8 || len > REGMB_TCP_ADU_MAX) return 0;
+
+    uint16_t pid  = (uint16_t)((adu[2] << 8) | adu[3]);
+    uint16_t mlen = (uint16_t)((adu[4] << 8) | adu[5]);
+    if (pid != 0) return 0;                /* not MODBUS: discard */
+    if (mlen != (uint16_t)(len - 6)) return 0;   /* length disagrees: discard */
+
+    /* unit id is not significant for a server addressed by its IP
+     * (TCP guide 4.4.1); it is echoed, never filtered. TCP has no
+     * broadcast: every request is answered. */
+    if (resp_cap < 7) return 0;
+    uint16_t n = pdu_handle(mb, adu + 7, (uint16_t)(len - 7),
+                            resp + 7, (uint16_t)(resp_cap - 7), false);
+    if (n == 0) return 0;
+
+    resp[0] = adu[0];                      /* transaction id, echoed */
+    resp[1] = adu[1];
+    resp[2] = 0;                           /* protocol id 0 = MODBUS */
+    resp[3] = 0;
+    resp[4] = (uint8_t)((n + 1) >> 8);     /* unit id + PDU */
+    resp[5] = (uint8_t)(n + 1);
+    resp[6] = adu[6];                      /* unit id, echoed */
+    return (uint16_t)(n + 7);
 }
