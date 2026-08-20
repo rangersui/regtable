@@ -63,6 +63,7 @@ jobs:
       - uses: arduino/setup-arduino-cli@v2
       - run: arduino-cli core update-index && arduino-cli core install arduino:avr
       - run: arduino-cli compile --fqbn arduino:avr:uno --library . --warnings all examples/arduino
+      - run: arduino-cli compile --fqbn arduino:avr:uno --library . --warnings all examples/arduino_modbus
 
   # runtime checks: memory errors and undefined behaviour under the test
   sanitizers:

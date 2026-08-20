@@ -77,6 +77,8 @@ Then type `help`, `list`, `set led true`, `get voltage`, `info pump`. The exampl
 
 The repo is laid out as an Arduino library (`library.properties`, `src/`, `examples/`). Clone or unzip it into `Documents/Arduino/libraries/regtable/`, then File > Examples > regtable > arduino. That sketch, [examples/arduino/arduino.ino](examples/arduino/arduino.ino), exposes the built-in LED, analog pin A0, and `millis()` on an Uno over the USB serial port; open Serial Monitor at 115200 with "Newline" line ending and type `list`.
 
+A second sketch, [examples/arduino_modbus/arduino_modbus.ino](examples/arduino_modbus/arduino_modbus.ino), serves the same registers as a Modbus RTU slave (address 1, 115200) instead of a CLI: point QModMaster or pymodbus at the Uno's COM port and read word 2 for A0, words 3-4 for uptime, write word 1 for the LED. It also shows what t3.5 frame collection looks like on Arduino: a `micros()` gap check.
+
 On AVR (Uno, Nano, Mega) `printf` has no float support unless the sketch is linked with `-lprintf_flt`, so FLOAT registers print as `?` there; integer and BOOL registers work as-is. On 32-bit Arduino boards (SAMD, RP2040, ESP32) FLOAT works. AVR also keeps `const` data in RAM (regtable does not use PROGMEM), so the table costs a few dozen bytes per entry there.
 
 ## Quick start on the MCU
