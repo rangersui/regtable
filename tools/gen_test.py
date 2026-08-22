@@ -100,6 +100,12 @@ BAD = [
      "device: demo\nregisters:\n  - ? [a, b]\n    : 1\n", "unhashable"),
     ("stdint typedef name",
      HEAD + reg(name="uint8_t", type="u8", perm="ro"), "_t"),
+    ("python keyword name",
+     HEAD + reg(name="def", type="u8", perm="ro"), "Python keyword"),
+    ("python soft keyword name",
+     HEAD + reg(name="match", type="u8", perm="ro"), "Python keyword"),
+    ("name shadows client method",
+     HEAD + reg(name="verify", type="u8", perm="ro"), "generated Python client"),
     ("hook hits stdint macro",
      HEAD + reg(name="a", type="u8", perm="rw").replace("perm: rw",
         "perm: rw\n    hooks: {on_change: UINT8_MAX}"), "uppercase"),
@@ -156,10 +162,18 @@ def run(text):
             capture_output=True, text=True)
 
 
+def compiles(d):
+    """The generated client must be importable Python."""
+    import py_compile
+    for f in Path(d).glob("*_client.py"):
+        py_compile.compile(str(f), doraise=True)
+
+
 def check_escaping():
     """The emitters must keep hostile descriptions harmless: no C
-    trigraphs, no broken Markdown table cells."""
-    desc = "trigraph ???/ pipe | back " + chr(92) + "| end"
+    trigraphs, no broken Markdown table cells, no Python escapes."""
+    desc = ("trigraph ???/ pipe | back " + chr(92) + "| "
+            + chr(92) + "x41 " + chr(92) + "N{BULLET} " + chr(92) + "u00e9 end")
     text = HEAD + reg(name="a", type="u8", perm="ro") \
         .replace("perm: ro", f"perm: ro\n    desc: '{desc}'")
     with tempfile.TemporaryDirectory() as d:
@@ -171,6 +185,10 @@ def check_escaping():
             return f"escaping fixture rejected: {r.stderr.strip()}"
         c = (Path(d) / "registers.c").read_text(encoding="ascii")
         md = (Path(d) / "registers.md").read_text(encoding="ascii")
+        try:
+            compiles(d)
+        except Exception as e:   # noqa: BLE001
+            return f"generated Python does not compile: {e}"
         if "??" in c:
             return "generated C still contains '??' (trigraph risk)"
         row = [l for l in md.splitlines() if "trigraph" in l][0]
@@ -188,6 +206,16 @@ def main():
     if r.returncode != 0:
         print(f"FAIL: the good fixture was rejected: {r.stderr.strip()}")
         failures += 1
+    with tempfile.TemporaryDirectory() as d:
+        y = Path(d) / "t.yaml"
+        y.write_text(GOOD, encoding="utf-8")
+        subprocess.run([sys.executable, str(GEN), str(y), "-o", d],
+                       capture_output=True, text=True)
+        try:
+            compiles(d)
+        except Exception as e:   # noqa: BLE001
+            print(f"FAIL: good fixture's Python client does not compile: {e}")
+            failures += 1
 
     err = check_escaping()
     if err:

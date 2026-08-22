@@ -91,10 +91,11 @@ test: $(TEST) $(MBTEST) $(MQTEST)
 	./$(MBTEST)
 	./$(MQTEST)
 
-# The validator rejection suite, then YAML -> registers.c/.h/.md,
-# then compile and run the smoke test against the generated table.
+# The validator rejection suite, then YAML -> registers.c/.h/.md and a
+# typed Python client, then compile and run the smoke test against the
+# generated table, then the Python client against a CLI built over it.
 # Needs python with PyYAML.
-codegen:
+codegen: $(EXAMPLE)
 	$(PY) tools/gen_test.py
 	$(PY) tools/regtable_gen.py tools/example.yaml -o gen
 	$(CC) $(CFLAGS) -Werror -Igen -o gen/smoke$(EXE) \
@@ -102,6 +103,9 @@ codegen:
 	./gen/smoke$(EXE)
 	g++ -x c++ -std=c++11 -Wall -Wextra -Werror -Isrc -Igen \
 	    -c tools/gen_smoke.c -o gen/smoke_cxx.o
+	$(CC) $(CFLAGS) -Werror -Igen -o gen/cli$(EXE) \
+	    tools/gen_cli.c gen/registers.c $(LIB_SRC) $(LIBM)
+	$(PY) tools/client_test.py gen/cli$(EXE) ./$(EXAMPLE) gen
 
 # Coverage-guided search for inputs the regression test did not think
 # of. Seeds a corpus with a few valid lines, then runs for FUZZ_TIME

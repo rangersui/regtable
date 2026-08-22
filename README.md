@@ -9,7 +9,7 @@ A table of named registers (C variables plus selected hardware peripherals) is e
 - **Serial CLI** `get temp`, `set led true`, `info interval`, `list`; `--json` on every command makes the same CLI the machine interface: discovery, typed calls, structured errors
 - **Modbus RTU / TCP** any SCADA / HMI / PLC master can read/write
 - **MQTT** publish state, subscribe to commands
-- **YAML codegen** one description generates the C table and its documentation
+- **YAML codegen** one description generates the C table, its documentation, and a typed Python client that verifies itself against the device
 - **Web panel** browser connects via Web Serial: live table, sliders, toggles, console
 
 All interfaces share one typed access path: `reg_set_raw()` / `reg_get_raw()`. Type checking, permission enforcement, range validation, and write callbacks happen once in the core. Protocol adapters only translate wire formats.
@@ -63,7 +63,7 @@ Two layers on the device, plus host-side projections generated from the same sou
          Web panel  ──► browser (Web Serial)
 ```
 
-Each adapter owns its transport, framing, and timing; the core table knows nothing about wire formats. One YAML yields the C table and its documentation; host-side tools need no generated code at all, because the table describes itself over the wire.
+Each adapter owns its transport, framing, and timing; the core table knows nothing about wire formats. One YAML yields the C table, its documentation, and a typed Python client. Host-side tools do not depend on generated code, because the table describes itself over the wire; the generated client uses that self-description to verify itself against the device at connect time.
 
 regtable is the upper half of a chain the chip vendors already built the lower half of. A HAL wraps thousands of silicon registers into typed handles for the firmware engineer; regtable wraps application variables into typed entries for the outside world:
 
@@ -282,7 +282,9 @@ Change detection is a shadow array: the raw value last accepted by `publish()`, 
 
 ## YAML codegen
 
-[tools/regtable_gen.py](tools/regtable_gen.py) turns one YAML description into three projections of the same table: `registers.c` (storage and the `RegEntry[]`), `registers.h` (externs and hook prototypes; hook bodies stay in application code), and `registers.md` (the documentation table).
+[tools/regtable_gen.py](tools/regtable_gen.py) turns one YAML description into four projections of the same table: `registers.c` (storage and the `RegEntry[]`), `registers.h` (externs and hook prototypes; hook bodies stay in application code), `registers.md` (the documentation table), and `<device>_client.py`, a typed Python client, with its runtime copied alongside so the output directory imports on its own.
+
+The client is a host-side mirror of the device's `RegEntry[]`: one property per register with the type in its signature, range and type checked locally before the wire, read-only registers with no setter at all, so an IDE completes `dev.interval = 500` and rejects `dev.temp = 99` before anything runs. The mirror is a contract and the device is the truth: connecting fetches the device's own `list --json` and compares it field by field with the schema baked into the class; any difference raises `SchemaDriftError` naming the register and the field, before the first read. The client keeps no values, so every attribute read is a wire read; `snapshot()` is the one bulk read, `watch()` polls for changes, `record()` samples over time. The wire carries no request ids, so a timeout or a malformed answer closes the connection rather than risk pairing a late reply with the wrong command; reconnecting re-verifies. Transports are duck-typed: a serial port (pyserial) or a CLI process over a pipe, which is how the test suite drives the desktop binaries without hardware.
 
 ```yaml
 device: demo

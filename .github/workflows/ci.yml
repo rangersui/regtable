@@ -30,6 +30,14 @@ jobs:
       - shell: cmd
         run: |
           .\build strict
+      # the codegen pipeline on Windows: CreateProcess paths, pipes, GBK console
+      - shell: cmd
+        run: |
+          pip install pyyaml
+          python tools\gen_test.py || exit /b 1
+          python tools\regtable_gen.py tools\example.yaml -o gen || exit /b 1
+          gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -O2 -Isrc -Igen -o gen\cli.exe tools\gen_cli.c gen\registers.c src\regtable_core.c src\regtable_cli.c src\regtable_modbus.c src\regtable_mqtt.c || exit /b 1
+          python tools\client_test.py gen\cli.exe example.exe gen || exit /b 1
 
   # ILP32: long is 32 bits, so the ULONG_MAX guards compile out and
   # the parser must hold on its own (as it will on the MCU)

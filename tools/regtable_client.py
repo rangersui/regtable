@@ -1,0 +1,424 @@
+"""Host-side runtime for generated regtable clients.
+
+regtable_gen.py emits one class per YAML description, a typed mirror
+of the device's RegEntry[]; this module is what that class inherits.
+The mirror is a contract, the device is the truth: connect() fetches
+the device's own `list --json` and compares it with the schema baked
+into the class. Any difference raises SchemaDriftError before the
+first read or write.
+
+The client holds no values. Every attribute read is a wire read;
+snapshot() is the one explicit bulk read. A cached value would be
+drift by another name.
+
+The wire carries no request ids, so a timeout, or an answer of the
+wrong shape, means request and response can no longer be paired. The
+client then closes the connection and every further call raises;
+reconnecting re-verifies the table. There is no resync: without
+correlation, no drain window can prove the line is clean.
+
+Transports are duck-typed: anything with write_line(str),
+read_line(timeout) -> str | None, and close(). SerialTransport wraps
+pyserial; PipeTransport drives a process over stdin/stdout, which is
+how the test suite talks to the desktop CLI binaries without hardware.
+"""
+
+import json
+import queue
+import struct
+import subprocess
+import threading
+import time
+
+
+# -- errors ----------------------------------------------------------- #
+
+class RegtableError(Exception):
+    """Base of everything this module raises."""
+
+
+class TransportError(RegtableError):
+    """No usable answer from the device within the timeout."""
+
+
+class RemoteError(RegtableError):
+    """The device refused: its own ERR string, as reported over the wire."""
+
+    def __init__(self, name, message):
+        super().__init__(f"{name}: {message}")
+        self.name = name
+        self.message = message
+
+
+class SchemaDriftError(RegtableError):
+    """The device's table differs from the generated client's schema."""
+
+    def __init__(self, client_name, diff):
+        self.diff = list(diff)
+        super().__init__(
+            f"device table differs from {client_name}:\n  " + "\n  ".join(self.diff))
+
+
+# -- transports -------------------------------------------------------- #
+
+class SerialTransport:
+    """A serial port speaking the regtable CLI. Opening the port resets
+    an Arduino (DTR); boot_delay covers the bootloader before the first
+    command is sent."""
+
+    def __init__(self, port, baud=115200, boot_delay=2.0):
+        import serial                      # pyserial, only when used
+        # a small fixed read timeout, set once: reassigning the
+        # timeout property on an open port reconfigures it, which can
+        # cut a line mid-byte and pulse the reset on an Arduino
+        try:
+            self._ser = serial.Serial(port, baud, timeout=0.05)
+        except Exception as e:
+            raise TransportError(f"cannot open {port}: {e}") from e
+        self._buf = b""
+        try:
+            time.sleep(boot_delay)
+            self._ser.reset_input_buffer()   # nothing is in flight yet
+        except Exception as e:
+            self.close()
+            raise TransportError(f"{port} failed after open: {e}") from e
+
+    def write_line(self, text):
+        try:
+            self._ser.write((text + "\n").encode("ascii"))
+        except Exception as e:
+            raise TransportError(f"write failed: {e}") from e
+
+    def read_line(self, timeout):
+        deadline = time.monotonic() + timeout
+        while True:
+            nl = self._buf.find(b"\n")
+            if nl >= 0:
+                line = self._buf[:nl]
+                self._buf = self._buf[nl + 1:]
+                return line.decode("ascii", "replace").rstrip("\r")
+            if time.monotonic() >= deadline:
+                return None
+            try:
+                self._buf += self._ser.read(256)
+            except Exception as e:
+                raise TransportError(f"read failed: {e}") from e
+
+    def close(self):
+        try:
+            self._ser.close()
+        except Exception:
+            pass
+
+
+_EOF = object()
+
+
+class PipeTransport:
+    """A child process speaking the regtable CLI on stdin/stdout: the
+    desktop example, or any binary built over a generated table."""
+
+    def __init__(self, argv):
+        self._proc = subprocess.Popen(
+            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        self._lines = queue.Queue()
+        self._eof = False
+        threading.Thread(target=self._pump, daemon=True).start()
+
+    def _pump(self):
+        for line in self._proc.stdout:
+            self._lines.put(line.rstrip("\r\n"))
+        self._lines.put(_EOF)          # wake a waiting reader at once
+
+    def write_line(self, text):
+        if self._eof:
+            raise TransportError("process ended")
+        try:
+            self._proc.stdin.write(text + "\n")
+            self._proc.stdin.flush()
+        except (BrokenPipeError, OSError, ValueError) as e:
+            raise TransportError(f"process ended: {e}")
+
+    def read_line(self, timeout):
+        if self._eof:
+            return None
+        try:
+            item = self._lines.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        if item is _EOF:
+            self._eof = True
+            return None
+        return item
+
+    def close(self):
+        p = self._proc
+        for f in (p.stdin,):
+            try: f.close()
+            except Exception: pass
+        try:
+            p.wait(timeout=2)
+        except Exception:
+            p.kill()
+            try: p.wait(timeout=2)
+            except Exception: pass
+        try: p.stdout.close()
+        except Exception: pass
+
+
+# -- client ------------------------------------------------------------ #
+
+PY_TYPES = {
+    "U8": int, "U16": int, "U32": int, "I8": int, "I16": int, "I32": int,
+    "FLOAT": float, "BOOL": bool,
+}
+
+
+def f32(x):
+    """x rounded to binary32, the only float a register can hold. The
+    generated C table, the client's local range check, and the schema
+    comparison all go through this, so they describe one boundary.
+    Raises ValueError for anything binary32 cannot hold."""
+    try:
+        return struct.unpack("<f", struct.pack("<f", float(x)))[0]
+    except (OverflowError, TypeError, ValueError) as e:
+        raise ValueError(f"{x!r} does not fit a float register") from e
+
+
+def _is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _is_num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _find_json(line):
+    """The JSON object or array on a line, tolerating a prompt or noise
+    before it; None when the line carries none (an echo, a banner)."""
+    starts = [i for i in (line.find("{"), line.find("[")) if i >= 0]
+    if not starts:
+        return None
+    try:
+        return json.loads(line[min(starts):])
+    except json.JSONDecodeError:
+        return None
+
+
+class RegtableClient:
+    """Base class for generated device clients. Subclasses set
+    __schema__ and define one property per register."""
+
+    __slots__ = ("_t", "_timeout", "_dead")
+    __schema__ = {}           # name -> {"type", "perm", "min", "max", "modbus"}
+
+    def __init__(self, transport, *, timeout=3.0, verify=True):
+        object.__setattr__(self, "_t", transport)
+        object.__setattr__(self, "_timeout", timeout)
+        object.__setattr__(self, "_dead", False)
+        if verify:
+            try:
+                self.verify()
+            except Exception:
+                try:                   # a refused handshake leaves no open port behind
+                    self.close()
+                except Exception:
+                    pass               # and close() cannot mask why it was refused
+                raise
+
+    # a typo on the left of '=' is an error, never a new attribute
+    def __setattr__(self, name, value):
+        if name not in self.__schema__ and name not in type(self).__slots__:
+            raise AttributeError(
+                f"{type(self).__name__} has no register '{name}'")
+        object.__setattr__(self, name, value)
+
+    # -- wire -------------------------------------------------------- #
+
+    def _fail(self, why, cause=None):
+        """A timeout, an answer of the wrong shape, or a transport that
+        failed mid-exchange (a write may have gone out in part) all
+        mean the request and response streams can no longer be paired:
+        there are no request ids on this wire. The only safe move is
+        to close the connection; the caller reconnects (which
+        re-verifies)."""
+        object.__setattr__(self, "_dead", True)
+        try:
+            self._t.close()
+        except Exception:
+            pass
+        raise TransportError(why + "; connection closed, reconnect") from cause
+
+    def _cmd_json(self, cmd, max_lines=8):
+        """Send one --json command, return its parsed JSON answer."""
+        if self._dead:
+            raise TransportError("connection closed after an earlier failure; reconnect")
+        try:
+            self._t.write_line(cmd)
+        except Exception as e:         # transports are duck-typed: any failure counts
+            self._fail(f"transport failed sending {cmd!r}: {e}", e)
+        deadline = time.monotonic() + self._timeout
+        for _ in range(max_lines):
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            try:
+                line = self._t.read_line(left)
+            except Exception as e:
+                self._fail(f"transport failed reading the answer to {cmd!r}: {e}", e)
+            if line is None:
+                break
+            obj = _find_json(line)
+            if obj is not None:
+                return obj
+        self._fail(f"no JSON answer to {cmd!r} within {self._timeout}s")
+
+    def _expect_dict(self, obj, cmd):
+        if not isinstance(obj, dict):
+            self._fail(f"answer to {cmd!r} is not an object: {obj!r}")
+        if "error" in obj:
+            if not isinstance(obj["error"], str):
+                self._fail(f"malformed error answer to {cmd!r}: {obj!r}")
+            return obj
+        return obj
+
+    def _get(self, name, pytype):
+        cmd = f"get {name} --json"
+        obj = self._expect_dict(self._cmd_json(cmd), cmd)
+        if "error" in obj:
+            raise RemoteError(name, obj["error"])
+        if "value" not in obj:
+            self._fail(f"answer to {cmd!r} has no value: {obj!r}")
+        v = obj["value"]
+        if pytype is bool:
+            ok = isinstance(v, bool)
+        elif pytype is int:
+            ok = isinstance(v, int) and not isinstance(v, bool)
+        else:
+            ok = isinstance(v, (int, float)) and not isinstance(v, bool)
+            if ok:
+                v = float(v)           # "1" on the wire is still a float register
+        if not ok:
+            self._fail(f"{name}: value {v!r} is not a {pytype.__name__}")
+        return v
+
+    def _set(self, name, value):
+        if isinstance(value, bool):
+            text = "true" if value else "false"
+        elif isinstance(value, float):
+            text = repr(value)         # shortest round-trip; the device re-rounds to binary32
+        else:
+            text = str(value)
+        cmd = f"set {name} {text} --json"
+        obj = self._expect_dict(self._cmd_json(cmd), cmd)
+        if "error" in obj:
+            raise RemoteError(name, obj["error"])
+        if obj.get("result") != "OK":
+            self._fail(f"answer to {cmd!r} is not a set result: {obj!r}")
+
+    # -- contract ---------------------------------------------------- #
+
+    def _list(self):
+        """list --json, checked for shape: an array of objects with
+        string name/type/perm. Anything else is a desynchronized or
+        foreign wire, and closes the connection."""
+        table = self._cmd_json("list --json")
+        if not isinstance(table, list):
+            self._fail("list --json did not return an array")
+        for e in table:
+            if not (isinstance(e, dict) and isinstance(e.get("name"), str)
+                    and isinstance(e.get("type"), str)
+                    and isinstance(e.get("perm"), str)):
+                self._fail(f"list --json entry is malformed: {e!r}")
+        return table
+
+    def verify(self):
+        """Compare the device's self-description with the generated
+        schema; raise SchemaDriftError with every difference."""
+        table = self._list()
+        device = {}
+        diff = []
+        for e in table:
+            if e["name"] in device:
+                diff.append(f"duplicate name on device: {e['name']}")
+            device[e["name"]] = e
+        for n in sorted(set(self.__schema__) - set(device)):
+            diff.append(f"missing on device: {n}")
+        for n in sorted(set(device) - set(self.__schema__)):
+            e = device[n]
+            diff.append(f"extra on device: {n} ({e.get('type')} {e.get('perm')})")
+        for n in sorted(set(self.__schema__) & set(device)):
+            want, got = self.__schema__[n], device[n]
+            for key in ("type", "perm"):
+                if want[key] != got.get(key):
+                    diff.append(f"{n}: {key} {want[key]} (client) vs {got.get(key)} (device)")
+            for key in ("min", "max"):
+                a, b = want.get(key), got.get(key)
+                if a is None or b is None:
+                    same = a is None and b is None
+                elif want["type"] == "FLOAT":
+                    # both are binary32 on the device; anything that is
+                    # not a number, or does not fit, is a difference
+                    try:
+                        same = _is_num(b) and f32(a) == f32(b)
+                    except ValueError:
+                        same = False
+                else:
+                    # integers compare exactly, and only as integers:
+                    # a device bound of 1.5 is not "1"
+                    same = _is_int(a) and _is_int(b) and a == b
+                if not same:
+                    diff.append(f"{n}: {key} {a} (client) vs {b} (device)")
+            a, b = want.get("modbus", 0) or 0, got.get("modbus", 0) or 0
+            if a != b:
+                diff.append(f"{n}: modbus {a} (client) vs {b} (device)")
+            a, b = want.get("desc") or "", got.get("desc") or ""
+            if a != b:
+                diff.append(f"{n}: desc {a!r} (client) vs {b!r} (device)")
+        if diff:
+            raise SchemaDriftError(type(self).__name__, diff)
+
+    # -- bulk and time ------------------------------------------------ #
+
+    def snapshot(self):
+        """One list --json: every register's current value, by name."""
+        return {e["name"]: e["value"] for e in self._list()}
+
+    def watch(self, *names, every=1.0, count=None):
+        """Poll; yield (name, value) for each change (and once at start)."""
+        names = names or tuple(self.__schema__)
+        last = {}
+        rounds = 0
+        while count is None or rounds < count:
+            snap = self.snapshot()
+            for n in names:
+                v = snap.get(n)
+                if n not in last or last[n] != v:
+                    last[n] = v
+                    yield n, v
+            rounds += 1
+            if count is None or rounds < count:
+                time.sleep(every)
+
+    def record(self, *names, duration, every=1.0):
+        """Sample names every `every` seconds for `duration` seconds;
+        returns rows of {"t": seconds, name: value, ...}."""
+        names = names or tuple(self.__schema__)
+        rows, t0 = [], time.monotonic()
+        while True:
+            t = time.monotonic() - t0
+            snap = self.snapshot()
+            rows.append({"t": round(t, 3), **{n: snap.get(n) for n in names}})
+            if t + every > duration:
+                return rows
+            time.sleep(every)
+
+    def close(self):
+        self._t.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()

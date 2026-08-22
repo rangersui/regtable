@@ -51,6 +51,12 @@ registers:
       on_write: pump_check
     desc: Pump on/off
 
+  - name: small
+    type: u8
+    perm: rw
+    init: 5
+    desc: Unranged byte; the type domain is still the limit
+
   - name: voltage
     type: float
     perm: ro

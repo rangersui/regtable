@@ -1,0 +1,36 @@
+# The table in examples/arduino/arduino.ino, described for codegen.
+# regtable_gen.py uno.yaml -o gen_uno  gives UnoDevice, a typed client
+# whose connect-time handshake verifies this description against the
+# board's own list --json.
+
+device: uno
+registers:
+  - name: led
+    type: bool
+    perm: rw
+    desc: Built-in LED
+    hooks:
+      on_change: led_changed
+
+  - name: a0
+    type: u16
+    perm: ro
+    desc: Analog pin A0, 0..1023
+    hooks:
+      on_read: a0_read
+
+  - name: uptime
+    type: u32
+    perm: ro
+    desc: millis()
+    hooks:
+      on_read: uptime_read
+
+  - name: pwm9
+    type: u8
+    perm: rw
+    min: 0
+    max: 255
+    desc: PWM duty on pin 9
+    hooks:
+      on_change: pwm9_changed
