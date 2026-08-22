@@ -6,6 +6,7 @@
 #   make run-tcp  build and start the desktop Modbus TCP slave example
 #   make run-mqtt build and start the desktop MQTT demo (stdout broker)
 #   make codegen  generate a table from tools/example.yaml and test it
+#                 (python with PyYAML; runs the package from python/, no install)
 #   make strict   rebuild everything with -Werror and run the test
 #   make fuzz     libFuzzer + ASan/UBSan on the CLI byte path (needs clang)
 #   make fuzz-mb  same, on the Modbus RTU frame path
@@ -95,9 +96,10 @@ test: $(TEST) $(MBTEST) $(MQTEST)
 # typed Python client, then compile and run the smoke test against the
 # generated table, then the Python client against a CLI built over it.
 # Needs python with PyYAML.
+RT = $(PY) python/regtable
 codegen: $(EXAMPLE)
-	$(PY) tools/gen_test.py
-	$(PY) tools/regtable_gen.py tools/example.yaml -o gen
+	$(PY) python/tests/gen_test.py
+	$(RT) gen tools/example.yaml -o gen
 	$(CC) $(CFLAGS) -Werror -Igen -o gen/smoke$(EXE) \
 	    tools/gen_smoke.c gen/registers.c $(LIB_SRC) $(LIBM)
 	./gen/smoke$(EXE)
@@ -105,7 +107,8 @@ codegen: $(EXAMPLE)
 	    -c tools/gen_smoke.c -o gen/smoke_cxx.o
 	$(CC) $(CFLAGS) -Werror -Igen -o gen/cli$(EXE) \
 	    tools/gen_cli.c gen/registers.c $(LIB_SRC) $(LIBM)
-	$(PY) tools/client_test.py gen/cli$(EXE) ./$(EXAMPLE) gen
+	$(PY) python/tests/client_test.py gen/cli$(EXE) ./$(EXAMPLE) gen
+	$(RT) watch tools/example.yaml --every 0 --count 1 --json --pipe ./gen/cli$(EXE)
 
 # Coverage-guided search for inputs the regression test did not think
 # of. Seeds a corpus with a few valid lines, then runs for FUZZ_TIME

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression test for regtable_gen.py's validator.
+"""Regression test for the `regtable gen` validator.
 
 Every case is a YAML document the generator must reject, with a
 fragment its error message must contain. Run by `make codegen`.
@@ -12,8 +12,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-TOOLS = Path(__file__).parent
-GEN = TOOLS / "regtable_gen.py"
+ROOT = Path(__file__).resolve().parent.parent.parent
+GEN = [sys.executable, str(ROOT / "python" / "regtable"), "gen"]
 
 HEAD = "device: demo\nregisters:\n"
 
@@ -158,7 +158,7 @@ def run(text):
         y = Path(d) / "t.yaml"
         y.write_text(text, encoding="utf-8")
         return subprocess.run(
-            [sys.executable, str(GEN), str(y), "-o", d],
+            [*GEN, str(y), "-o", d],
             capture_output=True, text=True)
 
 
@@ -179,7 +179,7 @@ def check_escaping():
     with tempfile.TemporaryDirectory() as d:
         y = Path(d) / "t.yaml"
         y.write_text(text, encoding="utf-8")
-        r = subprocess.run([sys.executable, str(GEN), str(y), "-o", d],
+        r = subprocess.run([*GEN, str(y), "-o", d],
                            capture_output=True, text=True)
         if r.returncode != 0:
             return f"escaping fixture rejected: {r.stderr.strip()}"
@@ -209,7 +209,7 @@ def main():
     with tempfile.TemporaryDirectory() as d:
         y = Path(d) / "t.yaml"
         y.write_text(GOOD, encoding="utf-8")
-        subprocess.run([sys.executable, str(GEN), str(y), "-o", d],
+        subprocess.run([*GEN, str(y), "-o", d],
                        capture_output=True, text=True)
         try:
             compiles(d)

@@ -34,10 +34,13 @@ jobs:
       - shell: cmd
         run: |
           pip install pyyaml
-          python tools\gen_test.py || exit /b 1
-          python tools\regtable_gen.py tools\example.yaml -o gen || exit /b 1
+          python python\tests\gen_test.py || exit /b 1
+          python python\regtable gen tools\example.yaml -o gen || exit /b 1
           gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -O2 -Isrc -Igen -o gen\cli.exe tools\gen_cli.c gen\registers.c src\regtable_core.c src\regtable_cli.c src\regtable_modbus.c src\regtable_mqtt.c || exit /b 1
-          python tools\client_test.py gen\cli.exe example.exe gen || exit /b 1
+          python python\tests\client_test.py gen\cli.exe example.exe gen || exit /b 1
+          python python\regtable watch tools\example.yaml --every 0 --count 1 --json --pipe gen\cli.exe || exit /b 1
+          pip install . || exit /b 1
+          regtable --version || exit /b 1
 
   # ILP32: long is 32 bits, so the ULONG_MAX guards compile out and
   # the parser must hold on its own (as it will on the MCU)
@@ -95,13 +98,22 @@ jobs:
             -Isrc -o mqtest regtable_mqtt_test.c src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c src/regtable_mqtt.c -lm
           ./mqtest
 
-  # YAML -> C table -> compile -> run, plus the validator rejections
+  # YAML -> C table -> compile -> run, plus the validator rejections,
+  # then the pip package: build, install, drive the installed command
   codegen:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: pip install pyyaml
       - run: make codegen
+      - run: pip install .
+      - run: |
+          cd /tmp
+          regtable --version
+          regtable gen "$GITHUB_WORKSPACE/tools/example.yaml" -o pkgout
+          test -f pkgout/demo_client.py && test -f pkgout/regtable_client.py
+          regtable watch "$GITHUB_WORKSPACE/tools/example.yaml" --every 0 --count 1 --pipe "$GITHUB_WORKSPACE/gen/cli"
+          python -c "import regtable.panel as p; print(p.panel_path())"
 
   # coverage-guided search on the CLI byte path
   fuzz:

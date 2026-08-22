@@ -1,4 +1,4 @@
-# The desktop example's table, described once. regtable_gen.py turns
+# The desktop example's table, described once. `regtable gen` turns
 # this into registers.c (storage + table), registers.h (externs +
 # hook prototypes), and registers.md (documentation).
 

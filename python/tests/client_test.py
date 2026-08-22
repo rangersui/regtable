@@ -15,11 +15,12 @@ addresses); the handshake must fail loudly and name the drift.
 import sys
 from pathlib import Path
 
-TOOLS = Path(__file__).resolve().parent
-sys.path.insert(0, str(TOOLS))
+ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT / "python"))
 
-from regtable_client import (  # noqa: E402
-    PipeTransport, RemoteError, SchemaDriftError)
+from regtable.client import (  # noqa: E402
+    PipeTransport, RemoteError, SchemaDriftError, TransportError)
+from regtable import build_client  # noqa: E402
 
 failures = 0
 cases = 0
@@ -148,7 +149,6 @@ def main():
             "modbus": e["modbus"] or None, "desc": e.get("desc") or None,
         }.items() if v is not None}
         for n, e in Dev.__schema__.items()], separators=(",", ":"))
-    from regtable_client import TransportError
     # handshake answers; then a get that never answers; then a STALE
     # answer arriving late, which must never be taken for a reply
     t = ScriptedTransport([table_json, None, '{"value":500}'])
@@ -274,6 +274,34 @@ def main():
                       lambda: setattr(dev2, "gain", 1e100))
         expect_raises(ValueError, "1e39 is a ValueError too",
                       lambda: setattr(dev2, "gain", 1e39))
+
+    # a pipe command that cannot start is a TransportError, not a traceback
+    expect_raises(TransportError, "missing pipe command is a TransportError",
+                  lambda: PipeTransport(["./no-such-binary-regtable"]))
+
+    # build_client() refuses bad input with an exception the host can catch
+    from regtable import GenerationError
+    import tempfile
+    import os
+    fd, bad_yaml = tempfile.mkstemp(suffix=".yaml")
+    os.close(fd)
+    Path(bad_yaml).write_text(
+        "device: demo\nregisters:\n  - name: 9x\n    type: u8\n    perm: ro\n")
+    expect_raises(GenerationError, "build_client() raises GenerationError on bad YAML",
+                  lambda: build_client(bad_yaml))
+    check(issubclass(GenerationError, ValueError), "GenerationError is a ValueError")
+    os.unlink(bad_yaml)
+    for n in (0, 65536, 70000, True, 2.5):
+        expect_raises(GenerationError, f"build_client max_entries={n!r} refused",
+                      lambda n=n: build_client(str(ROOT / "tools" / "example.yaml"), n))
+
+    # build_client() gives the same class without writing files
+    Mem = build_client(str(ROOT / "tools" / "example.yaml"))
+    check(Mem.__name__ == Dev.__name__ and Mem.__schema__ == Dev.__schema__,
+          "build_client() matches the generated file")
+    check(Mem.registers() == Dev.registers(), "build_client() registers() matches")
+    with Mem(PipeTransport([cli_bin])) as dev3:
+        check(dev3.interval == 1000, "in-memory client talks to the device")
 
     # the output directory imports on its own, from the repo root
     import subprocess

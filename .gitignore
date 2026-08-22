@@ -32,3 +32,6 @@ gen/
 *.pyc
 gen_uno/
 __pycache__/
+dist/
+*.egg-info/
+build/

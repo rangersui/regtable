@@ -1,6 +1,6 @@
 """Host-side runtime for generated regtable clients.
 
-regtable_gen.py emits one class per YAML description, a typed mirror
+`regtable gen` emits one class per YAML description, a typed mirror
 of the device's RegEntry[]; this module is what that class inherits.
 The mirror is a contract, the device is the truth: connect() fetches
 the device's own `list --json` and compares it with the schema baked
@@ -24,6 +24,7 @@ how the test suite talks to the desktop CLI binaries without hardware.
 """
 
 import json
+import os
 import queue
 import struct
 import subprocess
@@ -119,9 +120,17 @@ class PipeTransport:
     desktop example, or any binary built over a generated table."""
 
     def __init__(self, argv):
-        self._proc = subprocess.Popen(
-            argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        argv = list(argv)
+        if "/" in argv[0] or os.sep in argv[0]:
+            # a relative path with forward slashes does not start on
+            # Windows (CreateProcess); an absolute native one does everywhere
+            argv[0] = os.path.abspath(argv[0])
+        try:
+            self._proc = subprocess.Popen(
+                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        except OSError as e:
+            raise TransportError(f"cannot start {argv[0]!r}: {e}") from e
         self._lines = queue.Queue()
         self._eof = False
         threading.Thread(target=self._pump, daemon=True).start()

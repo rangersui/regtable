@@ -1,5 +1,5 @@
 # The table in examples/arduino/arduino.ino, described for codegen.
-# regtable_gen.py uno.yaml -o gen_uno  gives UnoDevice, a typed client
+# regtable gen uno.yaml -o gen_uno  gives UnoDevice, a typed client
 # whose connect-time handshake verifies this description against the
 # board's own list --json.
 

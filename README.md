@@ -61,6 +61,7 @@ Two layers on the device, plus host-side projections generated from the same sou
 
          scripts and gateways ──► the --json CLI, as-is
          Web panel  ──► browser (Web Serial)
+         pip install regtable ──► regtable gen / connect / watch / serve
 ```
 
 Each adapter owns its transport, framing, and timing; the core table knows nothing about wire formats. One YAML yields the C table, its documentation, and a typed Python client. Host-side tools do not depend on generated code, because the table describes itself over the wire; the generated client uses that self-description to verify itself against the device at connect time.
@@ -102,7 +103,8 @@ On AVR (Uno, Nano, Mega) `printf` has no float support unless the sketch is link
 ## Web panel
 
 ```bash
-python tools/panel.py
+pip install regtable
+regtable serve
 ```
 
 serves [regtable_panel.html](regtable_panel.html) on localhost and opens it (Web Serial needs a secure context; Chrome or Edge). Connect, pick the COM port, and the panel builds itself from the device's `list --json`: read-only values, click-to-edit fields, sliders for ranged numerics, toggles for booleans, an adjustable poll rate, a raw console, and a reference tab that can copy the live register table as Markdown. The device is the only source of truth; the panel ships no per-device configuration.
@@ -282,9 +284,16 @@ Change detection is a shadow array: the raw value last accepted by `publish()`, 
 
 ## YAML codegen
 
-[tools/regtable_gen.py](tools/regtable_gen.py) turns one YAML description into four projections of the same table: `registers.c` (storage and the `RegEntry[]`), `registers.h` (externs and hook prototypes; hook bodies stay in application code), `registers.md` (the documentation table), and `<device>_client.py`, a typed Python client, with its runtime copied alongside so the output directory imports on its own.
+```bash
+pip install regtable                       # or, from a checkout: python python/regtable ...
+regtable gen device.yaml -o gen            # registers.c/.h/.md + <device>_client.py
+regtable connect device.yaml -p COM6       # verify the board, then a Python REPL with `dev`
+regtable watch device.yaml -p COM6 a0 led  # print changes; --json for scripts
+```
 
-The client is a host-side mirror of the device's `RegEntry[]`: one property per register with the type in its signature, range and type checked locally before the wire, read-only registers with no setter at all, so an IDE completes `dev.interval = 500` and rejects `dev.temp = 99` before anything runs. The mirror is a contract and the device is the truth: connecting fetches the device's own `list --json` and compares it field by field with the schema baked into the class; any difference raises `SchemaDriftError` naming the register and the field, before the first read. `registers()` lists the table the client was built from, without touching the wire. The client keeps no values, so every attribute read is a wire read; `snapshot()` is the one bulk read, `watch()` polls for changes, `record()` samples over time. The wire carries no request ids, so a timeout or a malformed answer closes the connection rather than risk pairing a late reply with the wrong command; reconnecting re-verifies. Transports are duck-typed: a serial port (pyserial) or a CLI process over a pipe, which is how the test suite drives the desktop binaries without hardware.
+`regtable gen` ([python/regtable/gen.py](python/regtable/gen.py)) turns one YAML description into four projections of the same table: `registers.c` (storage and the `RegEntry[]`), `registers.h` (externs and hook prototypes; hook bodies stay in application code), `registers.md` (the documentation table), and `<device>_client.py`, a typed Python client, with its runtime copied alongside so the output directory imports on its own.
+
+The client is a host-side mirror of the device's `RegEntry[]`: one property per register with the type in its signature, range and type checked locally before the wire, read-only registers with no setter at all, so an IDE completes `dev.interval = 500` and rejects `dev.temp = 99` before anything runs. The mirror is a contract and the device is the truth: connecting fetches the device's own `list --json` and compares it field by field with the schema baked into the class; any difference raises `SchemaDriftError` naming the register and the field, before the first read. `registers()` lists the table the client was built from, without touching the wire. The client keeps no values, so every attribute read is a wire read; `snapshot()` is the one bulk read, `watch()` polls for changes, `record()` samples over time. The wire carries no request ids, so a timeout or a malformed answer closes the connection rather than risk pairing a late reply with the wrong command; reconnecting re-verifies. Transports are duck-typed: a serial port (pyserial) or a CLI process over a pipe (`--pipe` on the command line), which is how the test suite drives the desktop binaries without hardware. `regtable.build_client("device.yaml")` returns the same class without writing files; `regtable connect` and `regtable watch` are that class behind a command.
 
 ```yaml
 device: demo
@@ -299,7 +308,7 @@ registers:
     desc: Sampling interval, ms
 ```
 
-Every constraint the adapters enforce at init time is checked at generation time instead: duplicate names, Modbus word overlaps and widths, MQTT topic rules on names, ranges against the type's domain, hooks on registers that could never run them. A bad table fails before it compiles. `make codegen` generates from [tools/example.yaml](tools/example.yaml), compiles the output with `-Werror`, and runs a smoke test against it.
+Every constraint the adapters enforce at init time is checked at generation time instead: duplicate names, Modbus word overlaps and widths, MQTT topic rules on names, ranges against the type's domain, hooks on registers that could never run them. A bad table fails before it compiles. `make codegen` generates from [tools/example.yaml](tools/example.yaml), compiles the output with `-Werror`, runs a smoke test against it, and drives the Python client and command against a CLI built over the generated table. The package lives in [python/](python/) with its own [README](python/README.md); `pip install .` from the checkout installs the same thing PyPI ships.
 
 ## Atomicity
 

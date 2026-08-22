@@ -1,7 +1,7 @@
 /*
  * A stdio CLI over the generated table: what the Python client test
  * talks to through a pipe. Built by `make codegen` against the
- * registers.c/.h that regtable_gen.py produced from example.yaml.
+ * registers.c/.h that `regtable gen` produced from example.yaml.
  * Echo is off and there is no prompt, so every line on stdout is
  * the CLI's own answer.
  */

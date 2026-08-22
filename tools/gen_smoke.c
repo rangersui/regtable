@@ -2,7 +2,7 @@
  * Smoke test for generated tables: initialise the table and every
  * adapter against it, exercise a few values, exit 0. Compiled by
  * the codegen check (Makefile `make codegen`, CI job) against the
- * registers.c/.h that regtable_gen.py just produced.
+ * registers.c/.h that `regtable gen` just produced.
  */
 
 #include <stdio.h>

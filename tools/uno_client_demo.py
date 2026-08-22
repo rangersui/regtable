@@ -2,7 +2,7 @@
 """The generated typed client against a real Uno running
 examples/arduino/arduino.ino.
 
-    python tools/regtable_gen.py tools/uno.yaml -o gen_uno
+    regtable gen tools/uno.yaml -o gen_uno      # or: python python/regtable gen ...
     python tools/uno_client_demo.py COM6        # or /dev/ttyUSB0
 
 Walks the client through reads, writes, local refusals, the device's
@@ -22,18 +22,18 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "python"))
 sys.path.insert(0, str(ROOT / "gen_uno"))
 sys.path.insert(0, str(ROOT / "gen"))
 
-from regtable_client import RemoteError, SchemaDriftError  # noqa: E402
+from regtable.client import RemoteError, SchemaDriftError  # noqa: E402
 
 port = sys.argv[1] if len(sys.argv) > 1 else "COM6"
 
 try:
     from uno_client import UnoDevice  # noqa: E402
 except ImportError:
-    sys.exit("run first: python tools/regtable_gen.py tools/uno.yaml -o gen_uno")
+    sys.exit("run first: regtable gen tools/uno.yaml -o gen_uno")
 
 print(f"== UnoDevice on {port} (generated from tools/uno.yaml) ==")
 with UnoDevice.serial(port) as dev:            # handshake: list --json vs schema
@@ -72,7 +72,7 @@ print("== DemoDevice (example.yaml) on the same board: must drift ==")
 try:
     from demo_client import DemoDevice  # noqa: E402
 except ImportError:
-    sys.exit("run first: python tools/regtable_gen.py tools/example.yaml -o gen")
+    sys.exit("run first: regtable gen tools/example.yaml -o gen")
 try:
     DemoDevice.serial(port)
     print("no error: that would be a bug")
