@@ -50,8 +50,36 @@ extern "C" {
  * Register names become topic levels, so regmqtt_init enforces
  * MQTT's topic rules on them: 1..31 characters, no '/' (one name,
  * one level), no '+' or '#' (wildcards are only legal in
- * subscriptions). The prefix may contain '/' for a multi-level
+ * subscriptions), no leading '$' (that level is the adapter's
+ * metadata, below). The prefix may contain '/' for a multi-level
  * namespace, but no wildcards.
+ *
+ * Self-description, the same the CLI gives with list --json, lives
+ * on retained metadata topics under <prefix>/$meta, so a host that
+ * joins later finds the table without asking:
+ *
+ *   <prefix>/$meta/$table   {"count":4,"schema":"1a2b3c4d"}
+ *   <prefix>/$meta/<name>   one JSON object per register: the shape
+ *                           of a list --json entry minus value, plus
+ *                           its index in the table and the schema:
+ *     {"name":"led","type":"BOOL","perm":"RW","index":0,"desc":"Built-in LED","schema":"1a2b3c4d"}
+ *     {"name":"gain","type":"FLOAT","perm":"RW","index":3,"min":0.5,"max":2.5,"schema":"1a2b3c4d"}
+ *
+ * schema is the table's fingerprint: FNV-1a over every meta body in
+ * table order, so the same registers in the same shape give the
+ * same value and a renamed register, a changed range, or a moved
+ * entry gives another. Retained messages outlive the firmware that
+ * published them, and the fingerprint is what tells a current meta
+ * from a leftover: a host takes $table, keeps only metas whose
+ * schema matches it, and has the whole table once those cover
+ * indices 0..count-1. Anything else under $meta is ignored. A
+ * partial publish leaves the table incomplete, never mixed with an
+ * older one. regmqtt_announce publishes all of it; call it after
+ * each (re)connect, before regmqtt_publish_all.
+ *
+ * <prefix>/+ is state only: the metadata sits two levels down. A
+ * name starting with '$' is refused by regmqtt_init, so $meta never
+ * collides with a register, and $table never collides with a name.
  *
  * The dirty bitmap and on_change stay the application's: this
  * adapter never touches them. on_change is "something happened"
@@ -59,10 +87,24 @@ extern "C" {
  * is out of sync" (state convergence). A change that reverts
  * between two polls publishes nothing. */
 
-/*  Topic scratch size: prefix + '/' + name + "/set" + NUL must fit.
- *  regmqtt_init checks this against every entry. */
+/*  Topic scratch size: prefix + "/$meta/" + name + NUL must fit.
+ *  regmqtt_init checks this against every entry, and the descriptor
+ *  topic prefix + "/$meta/$table" against the prefix alone. */
 #ifndef REGTABLE_MQTT_TOPIC_SIZE
 #define REGTABLE_MQTT_TOPIC_SIZE 64
+#endif
+
+/*  Scratch for one $meta payload. regmqtt_init refuses a table whose
+ *  metadata would not fit it without the description (name, type,
+ *  perm, index, range, modbus, schema), so every meta it announces
+ *  goes out; a description that does not fit is left out of its
+ *  meta. Nothing is ever sent truncated. The descriptor and the
+ *  shortest meta need the lower bound below. */
+#ifndef REGTABLE_MQTT_META_SIZE
+#define REGTABLE_MQTT_META_SIZE 160
+#endif
+#if REGTABLE_MQTT_META_SIZE < 96
+#error "REGTABLE_MQTT_META_SIZE must be at least 96"
 #endif
 
 typedef struct RegMqtt {
@@ -81,9 +123,12 @@ typedef struct RegMqtt {
 } RegMqtt;
 
 /*  Bind the adapter. Fails with REG_ERR_TABLE when an argument is
- *  NULL or a topic would not fit REGTABLE_MQTT_TOPIC_SIZE. All
- *  entries start unsynced: the first regmqtt_poll (or
- *  regmqtt_publish_all) publishes everything. */
+ *  NULL, a name breaks the topic rules above, two entries share a
+ *  name (they would share every topic), a topic would not fit
+ *  REGTABLE_MQTT_TOPIC_SIZE, or an entry's metadata without its
+ *  description would not fit REGTABLE_MQTT_META_SIZE. All entries
+ *  start unsynced: the first regmqtt_poll (or regmqtt_publish_all)
+ *  publishes everything. */
 RegResult regmqtt_init(RegMqtt *mq, RegTable *table, const char *prefix,
                        int (*publish)(const char *, const char *, bool, void *),
                        void *user);
@@ -105,6 +150,16 @@ uint16_t regmqtt_publish_all(RegMqtt *mq);
  *  other topic returns REG_ERR_NOT_FOUND. A successful write shows
  *  up on the state topic at the next regmqtt_poll. */
 RegResult regmqtt_handle(RegMqtt *mq, const char *topic, const char *payload);
+
+/*  Publish the table's self-description, retained: the descriptor
+ *  <prefix>/$meta/$table and one <prefix>/$meta/<name> per entry,
+ *  all carrying the table's fingerprint (see above). Call after
+ *  each (re)connect, before regmqtt_publish_all. Returns the number
+ *  of messages publish() accepted (count + 1 when all went out,
+ *  which is why it is wider than a count); a
+ *  refusal is not retried here, call again. Stack while it runs:
+ *  REGTABLE_MQTT_TOPIC_SIZE + REGTABLE_MQTT_META_SIZE bytes. */
+uint32_t regmqtt_announce(RegMqtt *mq);
 
 #ifdef __cplusplus
 }

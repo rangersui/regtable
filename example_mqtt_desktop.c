@@ -5,9 +5,14 @@
  *
  *   Build + run:  make run-mqtt      (or .\build mqttdemo, then .\mqttdemo)
  *
- * Every loop turn the fake temperature drifts, then regmqtt_poll
- * publishes whatever moved:
+ * At start the table describes itself (regmqtt_announce:
+ * demo/$meta/$table with count and fingerprint, one demo/$meta/<name>
+ * per register, retained, the shape of a list --json entry), then the
+ * full state goes out. Every loop turn the fake temperature drifts,
+ * then regmqtt_poll publishes whatever moved:
  *
+ *   PUB [r] demo/$meta/$table {"count":4,"schema":"..."}
+ *   PUB [r] demo/$meta/temp {"name":"temp","type":"FLOAT",...}
  *   PUB [r] demo/temp 23.7
  *
  * Lines typed on stdin are treated as received MQTT messages,
@@ -73,7 +78,8 @@ int main(void)
     printf("regtable MQTT demo. Publishes appear as PUB lines;\n");
     printf("type '<topic> <payload>' to inject a message, 'quit' to exit.\n");
     printf("Try: demo/gain/set 1.5\n\n");
-    regmqtt_publish_all(&mq);
+    regmqtt_announce(&mq);                 /* after each connect: the table's shape, */
+    regmqtt_publish_all(&mq);              /* then its state */
 
     char line[128];
     for (;;) {

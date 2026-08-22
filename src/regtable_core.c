@@ -95,7 +95,7 @@ static void store_raw(const RegEntry *entry, uint32_t raw)
 
 RegResult reg_table_init(RegTable *t, const RegEntry *entries)
 {
-    uint16_t n = 0;
+    uint32_t n = 0;                 /* wider than count: the check below can fail */
     for (const RegEntry *e = entries; e->name != NULL; e++) {
         n++;
         if (n > REGTABLE_MAX_ENTRIES) {
@@ -105,7 +105,7 @@ RegResult reg_table_init(RegTable *t, const RegEntry *entries)
         }
     }
     t->entries = entries;
-    t->count   = n;
+    t->count   = (uint16_t)n;
     memset(t->dirty, 0, sizeof(t->dirty));
     return REG_OK;
 }

@@ -14,13 +14,16 @@
  * Topics (watch with: mosquitto_sub -h <broker> -t 'uno/#' -v):
  *   uno/led  uno/a0  uno/uptime     state, retained
  *   uno/<name>/set                  commands
+ *   uno/$meta/$table  uno/$meta/<name>   the table's self-description, retained
  *   uno/status                      online/offline, retained (LWT)
  *
  * The connect sequence carries the availability conventions: a last
  * will marks the device offline when the broker loses it, and every
- * (re)connect publishes "online" plus the full state
- * (regmqtt_publish_all), so the broker's retained values are never
- * stale for longer than one reconnect.
+ * (re)connect publishes "online", the table's shape
+ * (regmqtt_announce), and the full state (regmqtt_publish_all), so
+ * the broker's retained values are never stale for longer than one
+ * reconnect and a host that joins later finds the table without
+ * asking.
  */
 
 #include <SPI.h>
@@ -108,7 +111,8 @@ static void mqtt_connect(void)
     if (client.connect("uno-regtable", "uno/status", 0, true, "offline")) {
         client.publish("uno/status", "online", true);
         client.subscribe("uno/+/set");
-        regmqtt_publish_all(&mq);           /* reconnect heals everything */
+        regmqtt_announce(&mq);              /* the table's shape, */
+        regmqtt_publish_all(&mq);           /* then its state: reconnect heals everything */
     }
     /* Start the retry interval after a potentially blocking attempt
      * returns, so a slow failure cannot trigger another one at once. */

@@ -12,6 +12,9 @@ extern "C" {
 #ifndef REGTABLE_MAX_ENTRIES
 #define REGTABLE_MAX_ENTRIES 64     /* sizes the dirty bitmap */
 #endif
+#if REGTABLE_MAX_ENTRIES < 1 || REGTABLE_MAX_ENTRIES > 65535
+#error "REGTABLE_MAX_ENTRIES must be 1..65535 (the table count is uint16_t)"
+#endif
 
 /* -- type enum ------------------------------------------- */
 typedef enum RegType {
