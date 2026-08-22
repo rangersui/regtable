@@ -185,6 +185,8 @@ section p.muted { color: var(--text-muted); }
 .card p { font-size: 14px; color: var(--text-muted); margin: 0; }
 
 .card .mono { font-family: var(--mono); font-size: 12.5px; }
+.btn.mono { font-family: var(--mono); }
+section p .mono { font-family: var(--mono); font-size: 0.92em; }
 
 /* -- chain ------------------------------------------------- */
 
@@ -246,6 +248,7 @@ footer {
     <div class="cta">
       <a class="btn primary" href="https://github.com/rangersui/regtable">GitHub</a>
       <a class="btn" href="https://github.com/rangersui/regtable#try-it-on-the-desktop">Try it on the desktop</a>
+      <a class="btn mono" href="https://pypi.org/project/regtable/">pip install regtable</a>
     </div>
 
     <div class="term" id="term" aria-label="terminal session example"></div>
@@ -336,7 +339,8 @@ footer {
 
   <section>
     <h2>The host side is typed too</h2>
-<pre class="code"><span class="k">from</span> demo_client <span class="k">import</span> DemoDevice
+<pre class="code"><span class="c"># pip install regtable</span>
+<span class="k">from</span> demo_client <span class="k">import</span> DemoDevice
 
 <span class="k">with</span> DemoDevice.serial(<span class="k">"COM6"</span>) <span class="k">as</span> dev:  <span class="c"># fetches the board's list --json, compares it with the class</span>
     dev.led = <span class="k">True</span>
