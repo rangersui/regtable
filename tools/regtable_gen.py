@@ -100,8 +100,8 @@ LIB_PREFIXES = ("reg_", "regcli_", "regmb_", "regmqtt_")
 # register names become Python attributes on the generated client:
 # keywords would not parse, and these would shadow the base class
 PY_CLIENT_API = {
-    "serial", "pipe", "verify", "snapshot", "watch", "record",
-    "close", "__schema__", "__slots__", "__init__", "__setattr__",
+    "serial", "pipe", "verify", "registers", "snapshot", "watch",
+    "record", "close", "__schema__", "__slots__", "__init__", "__setattr__",
     "__enter__", "__exit__",
 }
 

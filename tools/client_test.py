@@ -104,6 +104,15 @@ def main():
         dev.gain = 2.5000000001          # rounds to binary32 2.5: inside
         check(dev.gain == 2.5, "float bound compared in binary32")
 
+        regs = dev.registers()
+        check([r["name"] for r in regs] == list(Dev.__schema__),
+              "registers() lists the table in order")
+        check(regs == Dev.registers(), "registers() works on the class too")
+        check(all(set(r) >= {"name", "type", "perm"} for r in regs),
+              "registers() rows carry name/type/perm")
+        check(repr(dev) == "<DemoDevice open: " + ", ".join(Dev.__schema__) + ">",
+              f"repr names the registers: {dev!r}")
+
         snap = dev.snapshot()
         check(set(snap) == set(Dev.__schema__), "snapshot covers the schema")
         check(snap["interval"] == 500 and snap["led"] is True, "snapshot values")
@@ -152,6 +161,38 @@ def main():
                   lambda: setattr(dev, "interval", 600))
     check(t.sent[-1] != "set interval 600 --json",
           "nothing was sent on a closed connection")
+
+    # a normal close() is final too: closed state, zero sends afterwards,
+    # and the transport is closed exactly once (a strict one refuses twice)
+    t = ScriptedTransport([table_json])
+    t.closes = 0
+    def strict_close():
+        if t.closes:
+            raise RuntimeError("closed twice")
+        t.closes += 1
+    t.close = strict_close
+    dev = Dev(t, timeout=0.2)
+    dev.close()
+    check(dev._dead and "closed" in repr(dev), f"close() marks the client closed: {dev!r}")
+    sent_before = len(t.sent)
+    expect_raises(TransportError, "read after close() raises", lambda: dev.interval)
+    expect_raises(TransportError, "write after close() raises",
+                  lambda: setattr(dev, "interval", 600))
+    check(len(t.sent) == sent_before, "nothing is sent after close()")
+    dev.close()                                   # idempotent
+    check(t.closes == 1, "close() twice closes the transport once")
+    # and after _fail() the transport is not closed a second time either
+    t = ScriptedTransport([table_json, None])
+    t.closes = 0
+    def strict_close2():
+        if t.closes:
+            raise RuntimeError("closed twice")
+        t.closes += 1
+    t.close = strict_close2
+    dev = Dev(t, timeout=0.2)
+    expect_raises(TransportError, "timeout fails the connection", lambda: dev.interval)
+    dev.close()
+    check(t.closes == 1, "close() after a failure does not close the transport again")
 
     # answers of the wrong shape are desync, not data
     t = ScriptedTransport([table_json, '[1,2]'])

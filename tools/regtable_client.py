@@ -253,7 +253,7 @@ class RegtableClient:
     def _cmd_json(self, cmd, max_lines=8):
         """Send one --json command, return its parsed JSON answer."""
         if self._dead:
-            raise TransportError("connection closed after an earlier failure; reconnect")
+            raise TransportError("connection closed; reconnect")
         try:
             self._t.write_line(cmd)
         except Exception as e:         # transports are duck-typed: any failure counts
@@ -379,6 +379,20 @@ class RegtableClient:
         if diff:
             raise SchemaDriftError(type(self).__name__, diff)
 
+    # -- what is there ------------------------------------------------ #
+
+    @classmethod
+    def registers(cls):
+        """The table this client was generated from: one dict per
+        register (name, type, perm, min, max, modbus, desc), in table
+        order. No wire traffic; usable on the class before connecting."""
+        return [{"name": n, **e} for n, e in cls.__schema__.items()]
+
+    def __repr__(self):
+        state = "closed" if self._dead else "open"
+        return (f"<{type(self).__name__} {state}: "
+                + ", ".join(self.__schema__) + ">")
+
     # -- bulk and time ------------------------------------------------ #
 
     def snapshot(self):
@@ -415,6 +429,13 @@ class RegtableClient:
             time.sleep(every)
 
     def close(self):
+        """Close for good: the transport is released and every later
+        call raises TransportError without sending anything. The
+        transport is closed once: after _fail(), or a first close(),
+        this is a no-op."""
+        if self._dead:
+            return
+        object.__setattr__(self, "_dead", True)
         self._t.close()
 
     def __enter__(self):

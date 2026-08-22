@@ -293,8 +293,8 @@ footer {
       </div>
       <div class="card">
         <h3>YAML codegen</h3>
-        <p>One description generates the table and its docs; every constraint
-        checked before compiling.</p>
+        <p>One description generates the table, its docs, and a typed Python
+        client; every constraint checked before compiling.</p>
       </div>
       <div class="card">
         <h3>Web panel</h3>
@@ -316,7 +316,7 @@ footer {
     firmware engineer. regtable wraps application variables into typed entries
     for the outside world. Together they are one chain:</p>
     <div class="chain">silicon registers &rarr; HAL handle &rarr; application
-    variables &rarr; <b>RegEntry</b> &rarr; CLI / Modbus / MQTT / panel</div>
+    variables &rarr; <b>RegEntry</b> &rarr; CLI / Modbus / MQTT / panel / Python</div>
   </section>
 
   <section>
@@ -332,6 +332,21 @@ footer {
     <p class="muted" style="margin-top:12px">C99 and the standard library, no
     dynamic allocation, no platform headers. The transport is two function
     pointers; switching chips means changing two function bodies.</p>
+  </section>
+
+  <section>
+    <h2>The host side is typed too</h2>
+<pre class="code"><span class="k">from</span> demo_client <span class="k">import</span> DemoDevice
+
+<span class="k">with</span> DemoDevice.serial(<span class="k">"COM6"</span>) <span class="k">as</span> dev:  <span class="c"># fetches the board's list --json, compares it with the class</span>
+    dev.led = <span class="k">True</span>
+    dev.interval = 50             <span class="c"># ValueError: below 100, refused before the wire</span>
+    dev.temp = 1.0                <span class="c"># AttributeError: read-only, there is no setter</span>
+    dev.registers()               <span class="c"># the table the client was generated from</span></pre>
+    <p class="muted" style="margin-top:12px">Generated from the same YAML as the
+    table. Any difference between the class and the device, a renamed register,
+    a changed range, raises <span class="mono">SchemaDriftError</span> naming the
+    field, before the first read.</p>
   </section>
 
   <footer>
