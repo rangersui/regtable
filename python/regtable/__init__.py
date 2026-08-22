@@ -7,12 +7,13 @@
 
 The typed client runtime lives in regtable.client; generated clients
 inherit from it. build_client() gives the same class straight from a
-YAML file without writing files.
+YAML file without writing files; RegtableClient.discover(transport)
+builds one from the device's own table, no YAML at all.
 """
 
 from .client import (RegtableClient, SerialTransport, PipeTransport,
                      RegtableError, TransportError, RemoteError,
-                     SchemaDriftError, f32)
+                     SchemaDriftError, f32, check_value)
 from .gen import build_client, GenerationError
 
 __version__ = "0.1.0"
@@ -20,5 +21,5 @@ __version__ = "0.1.0"
 __all__ = [
     "RegtableClient", "SerialTransport", "PipeTransport",
     "RegtableError", "TransportError", "RemoteError", "SchemaDriftError",
-    "f32", "build_client", "GenerationError", "__version__",
+    "f32", "check_value", "build_client", "GenerationError", "__version__",
 ]

@@ -1,12 +1,13 @@
 """The `regtable` command.
 
     regtable gen <yaml> [-o DIR] [--max-entries N]
-    regtable connect <yaml> (-p PORT [-b BAUD] | --pipe CMD [ARG ...])
-    regtable watch <yaml> [NAME ...] (-p PORT | --pipe CMD [ARG ...]) [--every S] [--count N] [--json]
+    regtable connect (-p PORT [-b BAUD] | --pipe CMD [ARG ...]) [--yaml FILE]
+    regtable watch [NAME ...] (-p PORT | --pipe CMD [ARG ...]) [--yaml FILE] [--every S] [--count N] [--json]
     regtable serve [--port PORT] [--no-browser]
 
-connect and watch build the typed client from the YAML in memory and
-verify it against the device before anything else; a device whose
+connect and watch take the device as it describes itself (list --json);
+with --yaml they build the typed client from the YAML instead and
+verify the device against it before anything else: a device whose
 table differs ends the command with the SchemaDriftError text and
 exit status 2.
 """
@@ -18,7 +19,8 @@ import sys
 import time
 
 from . import __version__
-from .client import PipeTransport, SerialTransport, RegtableError, TransportError
+from .client import (PipeTransport, SerialTransport, RegtableClient,
+                     RegtableError, TransportError)
 from .gen import build_client, GenerationError, main as gen_main
 
 
@@ -35,19 +37,27 @@ def _transport_args(ap):
                          "reset on open; default 2)")
     ap.add_argument("--timeout", type=float, default=3.0,
                     help="seconds to wait for an answer (default 3)")
+    ap.add_argument("--yaml", metavar="FILE",
+                    help="build the typed client from this YAML and verify "
+                         "the device against it (default: take the device's "
+                         "own table)")
     ap.add_argument("--max-entries", type=int, default=64,
                     help="REGTABLE_MAX_ENTRIES of the target build (default 64)")
 
 
 def _open(args):
+    """The YAML first, the hardware second: a bad description never
+    opens a port (opening one resets an Arduino)."""
     if args.pipe is not None and not args.pipe:
         raise TransportError("--pipe needs a command after it")
-    cls = build_client(args.yaml_file, args.max_entries)
+    cls = build_client(args.yaml, args.max_entries) if args.yaml else None
     if args.port:
         t = SerialTransport(args.port, args.baud, boot_delay=args.boot_delay)
     else:
         t = PipeTransport(args.pipe)
-    return cls(t, timeout=args.timeout)
+    if cls:
+        return cls(t, timeout=args.timeout)     # closes t if the handshake fails
+    return RegtableClient.discover(t, timeout=args.timeout)
 
 
 def cmd_gen(args):
@@ -58,9 +68,9 @@ def cmd_gen(args):
 def cmd_connect(args):
     dev = _open(args)
     cls = type(dev)
-    banner = (f"{dev!r}\n"
-              "dev.<name> reads, dev.<name> = value writes; "
-              "dev.registers(), dev.snapshot(), dev.watch(...)")
+    access = ("dev.<name> reads, dev.<name> = value writes"
+              if args.yaml else "dev['<name>'] reads, dev['<name>'] = value writes")
+    banner = f"{dev!r}\n{access}; dev.registers(), dev.snapshot(), dev.watch(...)"
     try:
         code.interact(banner=banner, local={"dev": dev, cls.__name__: cls},
                       exitmsg="")
@@ -111,13 +121,11 @@ def build_parser():
     g.add_argument("--max-entries", type=int, default=64)
     g.set_defaults(fn=cmd_gen)
 
-    c = sub.add_parser("connect", help="open a device, verify it, drop into a REPL")
-    c.add_argument("yaml_file")
+    c = sub.add_parser("connect", help="open a device, drop into a REPL")
     _transport_args(c)
     c.set_defaults(fn=cmd_connect)
 
     w = sub.add_parser("watch", help="print register changes as they happen")
-    w.add_argument("yaml_file")
     w.add_argument("names", nargs="*", help="registers to watch (default: all)")
     _transport_args(w)
     w.add_argument("--every", type=float, default=1.0, help="poll period, s (default 1)")

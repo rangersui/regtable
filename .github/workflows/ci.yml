@@ -1,5 +1,10 @@
 name: ci
 
+# Every push and pull request runs the test jobs. A version tag (v0.1.0)
+# additionally builds the Python package and, only if every test job
+# passed, publishes it to PyPI through trusted publishing: PyPI is told
+# once that this repository's ci.yml, environment "pypi", may upload
+# the project "regtable"; no token is stored anywhere.
 on:
   push:
   pull_request:
@@ -38,7 +43,8 @@ jobs:
           python python\regtable gen tools\example.yaml -o gen || exit /b 1
           gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -O2 -Isrc -Igen -o gen\cli.exe tools\gen_cli.c gen\registers.c src\regtable_core.c src\regtable_cli.c src\regtable_modbus.c src\regtable_mqtt.c || exit /b 1
           python python\tests\client_test.py gen\cli.exe example.exe gen || exit /b 1
-          python python\regtable watch tools\example.yaml --every 0 --count 1 --json --pipe gen\cli.exe || exit /b 1
+          python python\regtable watch --yaml tools\example.yaml --every 0 --count 1 --json --pipe gen\cli.exe || exit /b 1
+          python python\regtable watch temp led --every 0 --count 1 --pipe gen\cli.exe || exit /b 1
           pip install . || exit /b 1
           regtable --version || exit /b 1
 
@@ -112,7 +118,8 @@ jobs:
           regtable --version
           regtable gen "$GITHUB_WORKSPACE/tools/example.yaml" -o pkgout
           test -f pkgout/demo_client.py && test -f pkgout/regtable_client.py
-          regtable watch "$GITHUB_WORKSPACE/tools/example.yaml" --every 0 --count 1 --pipe "$GITHUB_WORKSPACE/gen/cli"
+          regtable watch --yaml "$GITHUB_WORKSPACE/tools/example.yaml" --every 0 --count 1 --pipe "$GITHUB_WORKSPACE/gen/cli"
+          regtable watch temp led --every 0 --count 1 --pipe "$GITHUB_WORKSPACE/gen/cli"
           python -c "import regtable.panel as p; print(p.panel_path())"
 
   # coverage-guided search on the CLI byte path
@@ -131,3 +138,37 @@ jobs:
             leak-*
             timeout-*
           if-no-files-found: ignore
+
+  # on a version tag: build the package once every test job is green,
+  # and refuse a tag that does not match __version__
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [strict, windows, x86-32bit, cortex-m, arduino, sanitizers, codegen, fuzz]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - run: |
+          v=$(python -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('python/regtable/__init__.py').read_text()).group(1))")
+          test "v$v" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != __version__ $v"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

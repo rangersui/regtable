@@ -21,9 +21,17 @@ Transports are duck-typed: anything with write_line(str),
 read_line(timeout) -> str | None, and close(). SerialTransport wraps
 pyserial; PipeTransport drives a process over stdin/stdout, which is
 how the test suite talks to the desktop CLI binaries without hardware.
+
+Two ways to a client. A generated class (regtable gen, build_client)
+is the YAML's contract: typed attributes, verified against the device
+at connect. discover() takes the device's own table instead: no YAML,
+nothing to drift, access by name (dev["led"]) with the same local
+checks; that is what generic hosts use, a panel or a REPL with
+nothing but a port.
 """
 
 import json
+import math
 import os
 import queue
 import struct
@@ -203,6 +211,74 @@ def _is_num(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+# the register domains: one table, used by the generator (YAML checks),
+# the local write checks, and the checks on what a device describes
+DOMAIN = {
+    "U8": (0, 255), "U16": (0, 65535), "U32": (0, 4294967295),
+    "I8": (-128, 127), "I16": (-32768, 32767), "I32": (-2147483648, 2147483647),
+}
+FLT_MAX = 3.4028234663852886e38          # largest binary32
+FLT_MIN = 1.1754943508222875e-38         # smallest normal binary32
+MODBUS_ADDR_MAX = 0xFFFF                 # word addresses are 16-bit; 0 = unmapped
+
+
+def in_domain(value, t):
+    """Is value a Python value of register type t that the register can
+    hold: a bool; a non-bool int inside the type's range; for FLOAT,
+    zero or a normal binary32 magnitude (the generator's rule for
+    YAML constants: nothing that underflows to zero or overflows).
+    Integers of any size compare without float conversion, so a
+    400-digit int is refused, not raised on."""
+    if t == "BOOL":
+        return isinstance(value, bool)
+    if t == "FLOAT":
+        if not _is_num(value):
+            return False
+        if isinstance(value, float) and not math.isfinite(value):
+            return False
+        return value == 0 or FLT_MIN <= abs(value) <= FLT_MAX
+    return _is_int(value) and DOMAIN[t][0] <= value <= DOMAIN[t][1]
+
+
+def check_value(name, entry, value):
+    """The local write check for one schema entry: type, finiteness,
+    binary32 fit, range (the YAML's, else the type's domain). Returns
+    the value as it will go on the wire. Generated setters carry the
+    same rules inline; this is the one place for clients whose schema
+    arrived at run time."""
+    t = entry["type"]
+    lo, hi = entry.get("min"), entry.get("max")
+    if t == "BOOL":
+        if not isinstance(value, bool):
+            raise TypeError(f"{name} expects bool, got {type(value).__name__}")
+        return value
+    if t == "FLOAT":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(f"{name} expects float, got {type(value).__name__}")
+        try:
+            value = float(value)
+        except OverflowError:
+            raise ValueError(f"{name}: value too large for a float")
+        if not math.isfinite(value):
+            raise ValueError(f"{name}: {value!r} is not a finite number")
+        try:
+            value = f32(value)
+        except ValueError:
+            raise ValueError(f"{name}: {value!r} does not fit a float register")
+        if lo is not None and not (f32(lo) <= value <= f32(hi)):
+            raise ValueError(f"{name}: {value} outside {f32(lo)!r}..{f32(hi)!r}")
+        return value
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} expects int, got {type(value).__name__}")
+    what = ""
+    if lo is None:
+        lo, hi = DOMAIN[t]
+        what = f" (the {t} domain)"
+    if not (lo <= value <= hi):
+        raise ValueError(f"{name}: {value} outside {lo}..{hi}{what}")
+    return value
+
+
 def _find_json(line):
     """The JSON object or array on a line, tolerating a prompt or noise
     before it; None when the line carries none (an echo, a banner)."""
@@ -216,8 +292,11 @@ def _find_json(line):
 
 
 class RegtableClient:
-    """Base class for generated device clients. Subclasses set
-    __schema__ and define one property per register."""
+    """Base class for device clients. Generated subclasses set
+    __schema__ and define one typed property per register;
+    discover() builds a subclass from the device's own table, with
+    access by name only. dev[name] and dev[name] = value work on
+    both, with the same local checks as the typed setters."""
 
     __slots__ = ("_t", "_timeout", "_dead")
     __schema__ = {}           # name -> {"type", "perm", "min", "max", "modbus"}
@@ -329,9 +408,12 @@ class RegtableClient:
     # -- contract ---------------------------------------------------- #
 
     def _list(self):
-        """list --json, checked for shape: an array of objects with
-        string name/type/perm. Anything else is a desynchronized or
-        foreign wire, and closes the connection."""
+        """list --json, checked for shape: an array of objects with a
+        string name, a known type, perm RO or RW, and a value of that
+        type. Anything else is a desynchronized or foreign wire, and
+        closes the connection. Bounds and the rest are the contract's
+        business: verify() for a generated client, discover() for one
+        built from this very answer."""
         table = self._cmd_json("list --json")
         if not isinstance(table, list):
             self._fail("list --json did not return an array")
@@ -340,6 +422,12 @@ class RegtableClient:
                     and isinstance(e.get("type"), str)
                     and isinstance(e.get("perm"), str)):
                 self._fail(f"list --json entry is malformed: {e!r}")
+            if e["type"] not in PY_TYPES:
+                self._fail(f"{e['name']}: unknown type {e['type']!r}")
+            if e["perm"] not in ("RO", "RW"):
+                self._fail(f"{e['name']}: unknown perm {e['perm']!r}")
+            if "value" not in e or not in_domain(e["value"], e["type"]):
+                self._fail(f"{e['name']}: value {e.get('value')!r} does not fit a {e['type']}")
         return table
 
     def verify(self):
@@ -387,6 +475,57 @@ class RegtableClient:
                 diff.append(f"{n}: desc {a!r} (client) vs {b!r} (device)")
         if diff:
             raise SchemaDriftError(type(self).__name__, diff)
+
+    # -- access by name ------------------------------------------------ #
+
+    def __getitem__(self, name):
+        e = self.__schema__.get(name)
+        if e is None:
+            raise KeyError(f"{type(self).__name__} has no register {name!r}")
+        return self._get(name, PY_TYPES[e["type"]])
+
+    def __setitem__(self, name, value):
+        e = self.__schema__.get(name)
+        if e is None:
+            raise KeyError(f"{type(self).__name__} has no register {name!r}")
+        if e["perm"] != "RW":
+            raise AttributeError(f"{name} is read-only")
+        self._set(name, check_value(name, e, value))
+
+    def __contains__(self, name):
+        return name in self.__schema__
+
+    @classmethod
+    def discover(cls, transport, *, timeout=3.0):
+        """A client built from the device's own `list --json`: the
+        schema is whatever the device reports, so there is no YAML and
+        nothing to verify against; registers are reached by name
+        (dev["led"]), with the same local checks as generated setters.
+        The class is named DiscoveredDevice."""
+        probe = RegtableClient(transport, timeout=timeout, verify=False)
+        schema = {}
+        for e in probe._list():                 # shape, type, perm, value checked there
+            n, t = e["name"], e["type"]
+            if n in schema:
+                probe._fail(f"device lists {n!r} twice")
+            mn, mx = e.get("min"), e.get("max")
+            if (mn is None) != (mx is None):
+                probe._fail(f"{n}: min and max come together, got {e!r}")
+            if mn is not None:
+                if t == "BOOL" or not (in_domain(mn, t) and in_domain(mx, t)) or mn > mx:
+                    probe._fail(f"{n}: bounds {mn!r}..{mx!r} do not fit a {t}")
+            mb = e.get("modbus", 0)
+            if not _is_int(mb) or not 0 <= mb <= MODBUS_ADDR_MAX:
+                probe._fail(f"{n}: modbus {mb!r} is not a word address (0..{MODBUS_ADDR_MAX})")
+            desc = e.get("desc", "")
+            if not isinstance(desc, str):
+                probe._fail(f"{n}: desc {desc!r} is not text")
+            schema[n] = {"type": t, "perm": e["perm"], "min": mn, "max": mx,
+                         "modbus": mb, "desc": desc}
+        sub = type("DiscoveredDevice", (RegtableClient,),
+                   {"__slots__": (), "__schema__": schema,
+                    "__doc__": f"discovered: {len(schema)} registers."})
+        return sub(transport, timeout=timeout, verify=False)
 
     # -- what is there ------------------------------------------------ #
 

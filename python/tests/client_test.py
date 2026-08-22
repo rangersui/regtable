@@ -144,7 +144,8 @@ def main():
     import json as _json
     table_json = _json.dumps([
         {k: v for k, v in {
-            "name": n, "type": e["type"], "perm": e["perm"], "value": 0,
+            "name": n, "type": e["type"], "perm": e["perm"],
+            "value": {"BOOL": False, "FLOAT": 0.0}.get(e["type"], 0),
             "min": e["min"], "max": e["max"],
             "modbus": e["modbus"] or None, "desc": e.get("desc") or None,
         }.items() if v is not None}
@@ -248,6 +249,79 @@ def main():
         expect_raises(SchemaDriftError, "non-numeric float bound is drift, not a crash",
                       lambda: Dev(ScriptedTransport([floaty]), timeout=0.2))
 
+    # the list itself is a protocol boundary: shape, type, perm, value
+    from regtable.client import RegtableClient as _RC
+    def closes_on(script, label):
+        tt = ScriptedTransport(script)
+        tt.closed = False
+        tt.close = lambda: setattr(tt, "closed", True)
+        expect_raises(TransportError, label, lambda: _RC.discover(tt, timeout=0.2))
+        check(tt.closed, f"{label}: connection closed")
+    closes_on([table_json.replace('"min":100,"max":60000', '"min":"oops","max":60000')],
+              "discover: string bound on an int register")
+    closes_on([table_json.replace('"min":100,"max":60000', '"min":100')],
+              "discover: min without max")
+    closes_on([table_json.replace('"min":100,"max":60000', '"min":200,"max":100')],
+              "discover: min above max")
+    closes_on([table_json.replace('"perm":"RO"', '"perm":"XX"', 1)],
+              "discover: unknown perm")
+    closes_on([table_json.replace('"type":"U16"', '"type":"U12"', 1)],
+              "discover: unknown type")
+    closes_on([table_json.replace('"value":0,', '', 1)],
+              "discover: missing value")
+    closes_on([table_json.replace('"type":"BOOL","perm":"RW","value":false',
+                                  '"type":"BOOL","perm":"RW","value":0')],
+              "discover: value of the wrong type")
+    closes_on([table_json.replace('"desc":"Sampling interval, ms"', '"desc":5')],
+              "discover: non-text desc")
+    # the domains: what the type can hold, not just the Python shape
+    closes_on([table_json.replace('"type":"U8","perm":"RW","value":0',
+                                  '"type":"U8","perm":"RW","value":0,"min":-1,"max":300')],
+              "discover: U8 bounds outside 0..255")
+    closes_on([table_json.replace('"min":0.5,"max":2.5', '"min":1e39,"max":1e40')],
+              "discover: FLOAT bounds beyond binary32")
+    closes_on([table_json.replace('"min":0.5,"max":2.5', '"min":NaN,"max":2.5')],
+              "discover: NaN bound")
+    closes_on([table_json.replace('"min":0.5,"max":2.5', '"min":1e-50,"max":2.5')],
+              "discover: FLOAT bound that underflows binary32")
+    closes_on([table_json.replace('"min":0.5,"max":2.5', '"min":0.5,"max":' + "1" * 401)],
+              "discover: 401-digit FLOAT bound")
+    closes_on([table_json.replace('"type":"FLOAT","perm":"RO","value":0.0',
+                                  '"type":"FLOAT","perm":"RO","value":1e-50', 1)],
+              "list: FLOAT value that underflows binary32")
+    closes_on([table_json.replace('"type":"FLOAT","perm":"RO","value":0.0',
+                                  '"type":"FLOAT","perm":"RO","value":' + "1" * 401, 1)],
+              "list: 401-digit FLOAT value")
+    closes_on([table_json.replace('"modbus":3', '"modbus":65536')],
+              "discover: modbus address beyond 16 bits")
+    closes_on([table_json.replace('"modbus":3', '"modbus":-1')],
+              "discover: negative modbus address")
+    closes_on([table_json.replace('"type":"U8","perm":"RW","value":0',
+                                  '"type":"U8","perm":"RW","value":300')],
+              "list: U8 value outside its domain")
+    closes_on([table_json.replace('"type":"FLOAT","perm":"RO","value":0.0',
+                                  '"type":"FLOAT","perm":"RO","value":1e39', 1)],
+              "list: FLOAT value beyond binary32")
+    closes_on([table_json.replace('"type":"FLOAT","perm":"RO","value":0.0',
+                                  '"type":"FLOAT","perm":"RO","value":NaN', 1)],
+              "list: NaN value")
+    check('"min":0.5,"max":2.5' in table_json and '"modbus":3' in table_json
+          and '"type":"U8","perm":"RW","value":0' in table_json
+          and '"type":"FLOAT","perm":"RO","value":0.0' in table_json,
+          "domain fixtures found their anchors")
+    # one domain table for the generator and the runtime
+    from regtable import gen as _gen
+    from regtable.client import DOMAIN as _DOM
+    check(all(_gen.TYPES[k][3] == _DOM[k.upper()] for k in ("u8", "u16", "u32", "i8", "i16", "i32")),
+          "generator and runtime share the integer domains")
+    # a typed client trips over the same malformed list at the handshake
+    tt = ScriptedTransport([table_json.replace('"value":0,', '', 1)])
+    expect_raises(TransportError, "typed handshake rejects a list without values",
+                  lambda: Dev(tt, timeout=0.2))
+    # and a good list still discovers
+    good = _RC.discover(ScriptedTransport([table_json]), timeout=0.2)
+    check(good.__schema__ == Dev.__schema__, "scripted discover yields the schema")
+
     # duplicate names and description drift are drift
     dup = table_json[:-1] + ',' + table_json[1:table_json.index('}') + 1] + ']'
     expect_raises(SchemaDriftError, "duplicate device name is drift",
@@ -259,7 +333,7 @@ def main():
                       lambda: Dev(ScriptedTransport([tweaked]), timeout=0.2))
 
     # a failing close() must not hide why the handshake failed
-    t = ScriptedTransport(['[{"name":"zzz","type":"U8","perm":"RO"}]'])
+    t = ScriptedTransport(['[{"name":"zzz","type":"U8","perm":"RO","value":0}]'])
     def bad_close():
         raise RuntimeError("close failed")
     t.close = bad_close
@@ -294,6 +368,59 @@ def main():
     for n in (0, 65536, 70000, True, 2.5):
         expect_raises(GenerationError, f"build_client max_entries={n!r} refused",
                       lambda n=n: build_client(str(ROOT / "tools" / "example.yaml"), n))
+
+    # discover(): the device's own table, access by name, same checks
+    from regtable.client import RegtableClient
+    with RegtableClient.discover(PipeTransport([cli_bin])) as disc:
+        check(type(disc).__name__ == "DiscoveredDevice", "discovered class name")
+        check(disc.__schema__ == Dev.__schema__,
+              f"discovered schema equals the generated one: {disc.__schema__}")
+        check(disc["interval"] == 1000, "item read on a discovered device")
+        disc["interval"] = 700
+        check(disc["interval"] == 700, "item write on a discovered device")
+        expect_raises(KeyError, "unknown name is a KeyError", lambda: disc["nope"])
+        expect_raises(AttributeError, "RO item write refused locally",
+                      lambda: disc.__setitem__("temp", 1.0))
+        expect_raises(TypeError, "item write type check", lambda: disc.__setitem__("interval", 1.5))
+        expect_raises(ValueError, "item write range check", lambda: disc.__setitem__("interval", 50))
+        expect_raises(ValueError, "item write domain check (no YAML range)",
+                      lambda: disc.__setitem__("small", 256))
+        expect_raises(ValueError, "item write float binary32 fit",
+                      lambda: disc.__setitem__("gain", 1e39))
+        expect_raises(TypeError, "bool item rejects int", lambda: disc.__setitem__("led", 1))
+        disc["gain"] = 2.5000000001
+        check(disc["gain"] == 2.5, "float item rounds to binary32 before the range check")
+        check("led" in disc and "nope" not in disc, "__contains__ on the schema")
+        expect_raises(AttributeError, "no typed attributes on a discovered device",
+                      lambda: setattr(disc, "interval", 5))
+        disc.verify()                     # the device agrees with itself
+        check(True, "discovered client verifies against its own device")
+        check(disc.registers() == Dev.registers(), "registers() on a discovered device")
+    # typed clients take item access too
+    with Dev(PipeTransport([cli_bin])) as dev4:
+        dev4["interval"] = 650
+        check(dev4.interval == 650 and dev4["interval"] == 650, "item access on a typed client")
+        expect_raises(ValueError, "item write on a typed client keeps the checks",
+                      lambda: dev4.__setitem__("interval", 50))
+
+    # the command line: --pipe passes everything after it through
+    from regtable import cli as _cli
+    p = _cli.build_parser()
+    a = p.parse_args(["watch", "temp", "--count", "1", "--pipe", "x", "-u", "--child-option"])
+    check(a.pipe == ["x", "-u", "--child-option"] and a.names == ["temp"] and a.count == 1,
+          f"--pipe keeps child options: {a.pipe}")
+    a = p.parse_args(["connect", "--pipe"])
+    check(a.pipe == [], "empty --pipe parses to an empty command")
+    check(_cli.main(["connect", "--pipe"]) == 2, "empty --pipe is refused with exit 2")
+    check(_cli.main(["watch", "temp", "--every", "0", "--count", "1",
+                     "--pipe", cli_bin, "-u", "--child-option"]) == 0,
+          "watch over a pipe with child options runs")
+    check(_cli.main(["watch", "--yaml", str(ROOT / "tools" / "example.yaml"),
+                     "--every", "0", "--count", "1", "--pipe", cli_bin]) == 0,
+          "watch with --yaml runs")
+    bad_yaml = str(ROOT / "tools" / "no-such.yaml")
+    check(_cli.main(["watch", "--yaml", bad_yaml, "--pipe", "./no-such-binary"]) == 2,
+          "a bad --yaml is refused before the pipe is started")
 
     # build_client() gives the same class without writing files
     Mem = build_client(str(ROOT / "tools" / "example.yaml"))

@@ -34,6 +34,8 @@ import struct
 import sys
 from pathlib import Path
 
+from .client import DOMAIN, FLT_MAX, FLT_MIN, MODBUS_ADDR_MAX
+
 try:
     import yaml
 except ImportError:
@@ -58,13 +60,13 @@ class UniqueKeyLoader(yaml.SafeLoader):
             seen.add(key)
         return super().construct_mapping(node, deep)
 
-TYPES = {
-    "u8":    ("uint8_t",  "REG_U8",    1, (0, 0xFF)),
-    "u16":   ("uint16_t", "REG_U16",   1, (0, 0xFFFF)),
-    "u32":   ("uint32_t", "REG_U32",   2, (0, 0xFFFFFFFF)),
-    "i8":    ("int8_t",   "REG_I8",    1, (-128, 127)),
-    "i16":   ("int16_t",  "REG_I16",   1, (-32768, 32767)),
-    "i32":   ("int32_t",  "REG_I32",   2, (-2**31, 2**31 - 1)),
+TYPES = {                                 # C type, enum, Modbus words, domain
+    "u8":    ("uint8_t",  "REG_U8",    1, DOMAIN["U8"]),
+    "u16":   ("uint16_t", "REG_U16",   1, DOMAIN["U16"]),
+    "u32":   ("uint32_t", "REG_U32",   2, DOMAIN["U32"]),
+    "i8":    ("int8_t",   "REG_I8",    1, DOMAIN["I8"]),
+    "i16":   ("int16_t",  "REG_I16",   1, DOMAIN["I16"]),
+    "i32":   ("int32_t",  "REG_I32",   2, DOMAIN["I32"]),
     "float": ("float",    "REG_FLOAT", 2, None),
     "bool":  ("uint8_t",  "REG_BOOL",  1, (0, 1)),
 }
@@ -102,8 +104,8 @@ LIB_PREFIXES = ("reg_", "regcli_", "regmb_", "regmqtt_")
 # register names become Python attributes on the generated client:
 # keywords would not parse, and these would shadow the base class
 PY_CLIENT_API = {
-    "serial", "pipe", "verify", "registers", "snapshot", "watch",
-    "record", "close", "__schema__", "__slots__", "__init__", "__setattr__",
+    "serial", "pipe", "verify", "discover", "registers", "snapshot",
+    "watch", "record", "close", "__schema__", "__slots__", "__init__", "__setattr__",
     "__enter__", "__exit__",
 }
 
@@ -142,12 +144,6 @@ def symbol_problem(ident, device):
         return "collides with the generated table symbol"
     return None
 
-FLT_MAX = 3.4028234663852886e38          # binary32
-
-
-FLT_MIN = 1.1754943508222875e-38         # smallest normal binary32
-
-
 def finite_float(v):
     """A value a float register can hold and a C constant can spell:
     zero, or a normal binary32 magnitude. Integers of any size
@@ -181,6 +177,8 @@ def load(path):
     try:
         doc = yaml.load(Path(path).read_text(encoding="utf-8"),
                         Loader=UniqueKeyLoader)
+    except OSError as e:
+        fail(f"{path}: {e.strerror or e}")
     except yaml.YAMLError as e:
         fail(f"{path}: {e}")
     if not isinstance(doc, dict):
@@ -287,12 +285,12 @@ def validate(doc, max_entries=64):
                      f"(the default init is 0: set one explicitly)")
 
         mb = r.get("modbus", 0)
-        if not isinstance(mb, int) or isinstance(mb, bool) or mb < 0 or mb > 0xFFFF:
+        if not isinstance(mb, int) or isinstance(mb, bool) or mb < 0 or mb > MODBUS_ADDR_MAX:
             fail(f"{where}: 'modbus' must be a word address 1..65535 "
                  f"(0 or absent = not mapped)")
         if mb:
             words = TYPES[t][2]
-            if mb + words - 1 > 0xFFFF:
+            if mb + words - 1 > MODBUS_ADDR_MAX:
                 fail(f"{where}: a {words}-word value at {mb} does not fit "
                      f"the address space")
             for s, e, other in spans:
