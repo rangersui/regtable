@@ -3,6 +3,7 @@
     regtable gen <yaml> [-o DIR] [--max-entries N]
     regtable connect (-p PORT [-b BAUD] | --pipe CMD [ARG ...]) [--yaml FILE]
     regtable watch [NAME ...] (-p PORT | --pipe CMD [ARG ...]) [--yaml FILE] [--every S] [--count N] [--json]
+    regtable fetch (-p PORT | --pipe CMD [ARG ...]) [--yaml FILE]
     regtable serve [--port PORT] [--no-browser]
 
 connect and watch take the device as it describes itself (list --json);
@@ -104,6 +105,89 @@ def cmd_watch(args):
     return 0
 
 
+def printable(s):
+    """One line of printable ASCII: any other character is shown as
+    its escape (\\x1b, \\u00b5) instead of reaching the terminal. The
+    device's strings are its own; what fetch prints stays ASCII."""
+    return "".join(c if 32 <= ord(c) < 127 else
+                   (f"\\x{ord(c):02x}" if ord(c) < 128 else
+                    f"\\u{ord(c):04x}" if ord(c) < 0x10000 else f"\\U{ord(c):08x}")
+                   for c in str(s))
+
+
+def fetch_text(ident, schema, pins):
+    """The device drawn as a chip, pure ASCII. The silicon peripherals
+    the table exposes sit on the side pins (left, right, alternating,
+    in table order); the top and bottom pins are the package. Below,
+    what the device said about itself (rendered printable, see
+    printable()) and what the table holds."""
+    ident = {k: printable(v) if isinstance(v, str) else v for k, v in ident.items()}
+    left, right = pins[0::2], pins[1::2]
+    rows = max(len(left), len(right), 4)
+    inner = 21                                      # the die, between the body walls
+    lab = max([len(x) for x in pins] + [6])         # label column width
+    top_pins = 9
+    pin_row = "-" + "-+" * top_pins + "--"          # as wide as the die: 1 + 18 + 2 = inner
+    pin_legs = "   " + ("| " * top_pins).rstrip()   # one leg under each + of the row
+    pad = " " * (lab + 5)                           # under the labels and the "----"
+    lines = []
+    lines.append(f"{pad}{pin_legs}")
+    lines.append(f"{pad}+{pin_row}+")
+    face = {0: "o", 1: "regtable", 2: f"v{ident.get('regtable', '?')}"}
+    for i in range(rows):
+        l = left[i] if i < len(left) else ""
+        r = right[i] if i < len(right) else ""
+        if i == 0:
+            mid = " o" + " " * (inner - 2)            # pin 1 mark, top-left of the die
+        elif i == 1:
+            mid = "regtable".center(inner)
+        elif i == 2:
+            mid = f"v{ident.get('regtable', '?')}".center(inner)
+        else:
+            mid = " " * inner
+        lines.append(f"{l:>{lab}} ----|{mid}|---- {r}")
+    lines.append(f"{pad}+{pin_row}+")
+    lines.append(f"{pad}{pin_legs}")
+    lines.append("")
+    who = ident.get("device") or "device"
+    if ident.get("chip"):
+        who += f" @ {ident['chip']}"
+    lines.append(f"{'':>{lab + 2}}{who}")
+    fw = ident.get("fw")
+    if fw:
+        lines.append(f"{'':>{lab + 2}}{'fw':<9} {fw}" + (f" ({ident['hash']})" if ident.get("hash") else ""))
+    for key in ("built", "compiler", "regtable"):
+        if key in ident:
+            lines.append(f"{'':>{lab + 2}}{key:<9} {ident[key]}")
+    rw = sum(1 for e in schema.values() if e["perm"] == "RW")
+    lines.append(f"{'':>{lab + 2}}{'regs':<9} {len(schema)} ({rw} RW, {len(schema) - rw} RO)")
+    lines.append(f"{'':>{lab + 2}}{'schema':<9} {ident.get('schema', '?')}")
+    return "\n".join(l.rstrip() for l in lines)
+
+
+def silicon_pins(cls):
+    """The peripherals a client's silicon registers come from, in
+    table order, each once: what the generated class recorded from the
+    SVD picks (__silicon__). A discovered device carries no such
+    record, so its pins stay bare."""
+    pins = []
+    for path in cls.__silicon__.values():
+        p = path.split(".", 1)[0]
+        if p not in pins:
+            pins.append(p)
+    return pins
+
+
+def cmd_fetch(args):
+    dev = _open(args)
+    try:
+        ident = dev.identity()
+        print(fetch_text(ident, type(dev).__schema__, silicon_pins(type(dev))))
+    finally:
+        dev.close()
+    return 0
+
+
 def cmd_serve(args):
     from .panel import serve
     return serve(args.port, open_browser=not args.no_browser)
@@ -133,6 +217,10 @@ def build_parser():
     w.add_argument("--count", type=int, default=None, help="stop after N polls")
     w.add_argument("--json", action="store_true", help="one JSON object per line")
     w.set_defaults(fn=cmd_watch)
+
+    f = sub.add_parser("fetch", help="the device's identity and table, drawn as a chip")
+    _transport_args(f)
+    f.set_defaults(fn=cmd_fetch)
 
     s = sub.add_parser("serve", help="serve the Web Serial panel on localhost")
     s.add_argument("--port", type=int, default=8321)

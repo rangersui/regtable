@@ -27,12 +27,17 @@ typedef struct RegCli {
     uint16_t        pos;        /* chars in buf so far            */
     bool            echo;       /* echo typed chars back (default on) */
     bool            overflow;   /* line outgrew buf: reject it at line end */
+    const RegIdentity *identity; /* strings `id` reports; NULL = none set */
 } RegCli;
 
 /* -- API ------------------------------------------------- */
 
 /*  Initialise CLI context. */
 void regcli_init(RegCli *cli, RegTable *table, RegTransport tx);
+
+/*  The strings `id` reports beside what the build and the table
+ *  know. The struct is the application's; it must outlive the CLI. */
+void regcli_set_identity(RegCli *cli, const RegIdentity *identity);
 
 /*  Feed one received byte. Handles echo, backspace, and line
  *  ending; on '\n' or '\r' the line is parsed and executed,

@@ -81,6 +81,10 @@ ELEMENTS = {
                                  "alternateRegister", "addressOffset", "dataType",
                                  "modifiedWriteValues", "writeConstraint", "readAction",
                                  "fields"},
+    "cpu": {"name", "revision", "endian", "mpuPresent", "fpuPresent", "fpuDP", "dspPresent",
+            "icachePresent", "dcachePresent", "itcmPresent", "dtcmPresent", "vtorPresent",
+            "nvicPrioBits", "vendorSystickConfig", "deviceNumInterrupts", "pmuPresent",
+            "pmuNumEventCnt", "sauNumRegions", "sauRegionsConfig"},
     "fields": {"field"},
     "field": _DIM | {"name", "description", "bitOffset", "bitWidth", "lsb", "msb", "bitRange",
                      "access", "modifiedWriteValues", "writeConstraint", "readAction",
@@ -110,6 +114,47 @@ _DIM_NUM = re.compile(r"^([0-9]+)-([0-9]+)$")
 _DIM_ABC = re.compile(r"^([A-Z])-([A-Z])$")
 _DIM_LIST = re.compile(r"^[_0-9a-zA-Z]+(?:,\s*[_0-9a-zA-Z]+)+$")
 _BITRANGE = re.compile(r"^\[([0-9]{1,2}):([0-9]{1,2})\]$")
+
+
+class SvdTable(dict):
+    """The registers by path, plus what the <device> header says about
+    the chip: chip = {"name", "series", "cpu"} (keys present when the
+    file gives them). cpu is the schema's own token (cpuNameType:
+    CM0PLUS, CM3, other, ...; CM0+ written as CM0PLUS), which is what
+    two files describing one chip are compared on; cpu_display() spells
+    it out for people."""
+    chip = {}
+
+
+# cpuNameType: the schema's enumeration (CMSIS-SVD 1.3.12), and how
+# each core is spelt out; "other" is a stated value (some other
+# processor) with no name to show
+CPU_NAMES = {
+    "CM0": "Cortex-M0", "CM0PLUS": "Cortex-M0+", "CM1": "Cortex-M1",
+    "CM3": "Cortex-M3", "CM4": "Cortex-M4", "CM7": "Cortex-M7", "CM23": "Cortex-M23",
+    "CM33": "Cortex-M33", "CM35P": "Cortex-M35P", "CM52": "Cortex-M52", "CM55": "Cortex-M55",
+    "CM85": "Cortex-M85", "SC000": "SecurCore SC000", "SC300": "SecurCore SC300",
+    "ARMV8MML": "Armv8-M Mainline", "ARMV8MBL": "Armv8-M Baseline",
+    "ARMV81MML": "Armv8.1-M Mainline", "CA5": "Cortex-A5", "CA7": "Cortex-A7",
+    "CA8": "Cortex-A8", "CA9": "Cortex-A9", "CA15": "Cortex-A15", "CA17": "Cortex-A17",
+    "CA53": "Cortex-A53", "CA57": "Cortex-A57", "CA72": "Cortex-A72", "SMC1": "SMC1",
+    "other": None,
+}
+_CPU_ALIASES = {"CM0+": "CM0PLUS"}       # two spellings the schema allows for one core
+
+
+def _cpu_token(raw, what):
+    """The cpu name as one of the schema's tokens, aliases folded."""
+    token = _CPU_ALIASES.get(raw, raw)
+    if token not in CPU_NAMES:
+        raise SvdError(f"{what}: cpu name {raw!r} is not one the CMSIS-SVD schema lists "
+                       f"({', '.join(list(CPU_NAMES) + list(_CPU_ALIASES))})")
+    return token
+
+
+def cpu_display(token):
+    """The core spelt out (CM0PLUS -> Cortex-M0+), None for other."""
+    return CPU_NAMES[token]
 
 
 class Field:
@@ -172,10 +217,11 @@ def _ident(name, what):
     return name
 
 
-def ascii_text(s, what):
+def ascii_text(s, what, hint="; give the pick a desc: of its own"):
     """s as printable ASCII on one line: NFKD, then the symbol table;
     a character neither covers is refused by name, never dropped (a
-    dropped sign changes what a description means)."""
+    dropped sign changes what a description means). what names the
+    text in the message, hint says what to do about it."""
     out = []
     for ch in " ".join(s.split()):
         if 32 <= ord(ch) < 127:
@@ -189,8 +235,8 @@ def ascii_text(s, what):
         if base and all(32 <= ord(c) < 127 for c in base):
             out.append(base)
             continue
-        raise SvdError(f"{what}: description has {ch!r} (U+{ord(ch):04X}), which has no "
-                       f"ASCII form here; give the pick a desc: of its own")
+        raise SvdError(f"{what} has {ch!r} (U+{ord(ch):04X}), which has no "
+                       f"ASCII form here{hint}")
     return "".join(out)
 
 
@@ -438,6 +484,29 @@ def _load_svd(path):
     if root.tag != "device":
         raise SvdError(f"{path}: not a CMSIS-SVD file (root is <{root.tag}>)")
     _known(root, "device")
+    # the header is read as strictly as the registers: the name is an
+    # identifier (identifierType), the series is text with an ASCII
+    # form, <cpu> appears once, holds only what the schema defines
+    # there, and names a core the schema lists (kept as the schema's
+    # token, "other" included: a stated value, not an absent one). The
+    # strings end up in generated C; the reader hands over nothing it
+    # did not check.
+    chip = {}
+    name = _one(root, "name", "device")
+    if name:
+        chip["name"] = _ident(name, "device name")
+    series = _one(root, "series", "device")
+    if series:
+        chip["series"] = ascii_text(series, "device series", hint="")
+    cpus = root.findall("cpu")
+    if len(cpus) > 1:
+        raise SvdError(f"{path}: <cpu> appears {len(cpus)} times")
+    if cpus:
+        _known(cpus[0], "device cpu")
+        cpu = _one(cpus[0], "name", "device cpu")
+        if cpu is None:
+            raise SvdError(f"{path}: device cpu: <name> is missing")
+        chip["cpu"] = _cpu_token(cpu, "device cpu")
     aub = _opt_int(root, "addressUnitBits", "device")
     if aub is None:
         raise SvdError(f"{path}: device has no <addressUnitBits> (required by the schema; "
@@ -462,7 +531,8 @@ def _load_svd(path):
             raise SvdError(f"peripheral {n} appears twice")
         by_name[n] = p
 
-    out = {}
+    out = SvdTable()
+    out.chip = chip
     for p in periphs[0].findall("peripheral"):
         pname = _one(p, "name", "peripheral")
         src = p
@@ -538,7 +608,7 @@ def register_desc(reg):
     the vendor's text has no ASCII form."""
     s = f"{reg.path} @0x{reg.addr:08X}"
     if reg.desc:
-        s += f": {ascii_text(reg.desc, reg.path)}"
+        s += f": {ascii_text(reg.desc, f'{reg.path} description')}"
     if reg.fields:
         bits = []
         for f in reg.fields.values():
@@ -552,5 +622,5 @@ def field_desc(reg, field):
     span = f"bit {field.lsb}" if field.width == 1 else f"bits {field.lsb + field.width - 1}:{field.lsb}"
     s = f"{reg.path}.{field.name} ({span} @0x{reg.addr:08X})"
     if field.desc:
-        s += f": {ascii_text(field.desc, f'{reg.path}.{field.name}')}"
+        s += f": {ascii_text(field.desc, f'{reg.path}.{field.name} description')}"
     return s

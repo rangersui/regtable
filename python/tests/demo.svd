@@ -9,6 +9,7 @@
   <version>1.0</version>
   <description>Synthetic test device</description>
   <addressUnitBits>8</addressUnitBits>
+  <cpu><name>CM0PLUS</name></cpu>
   <size>32</size>
   <access>read-write</access>
   <peripherals>

@@ -108,6 +108,8 @@ void setup()
     reg_table_init(&table, registry);
     RegTransport tx = { .read = serial_read, .write = serial_write };
     regcli_init(&cli, &table, tx);
+    static const RegIdentity who = { "uno", "1.0", NULL, "ATmega328P" };   /* `id` reports these */
+    regcli_set_identity(&cli, &who);
 }
 
 void loop()

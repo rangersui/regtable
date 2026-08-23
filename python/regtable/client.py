@@ -299,6 +299,43 @@ def _find_json(line):
         return None
 
 
+_TYPE_ENUM = {"U8": 0, "U16": 1, "U32": 2, "I8": 3, "I16": 4, "I32": 5, "FLOAT": 6, "BOOL": 7}
+
+
+def schema_fingerprint(schema):
+    """The table's fingerprint as reg_table_schema() computes it on the
+    device, from a schema dict: FNV-1a (32 bit) over each entry's
+    name (NUL included), type and perm as the C enums, min and max as
+    the 32-bit union bits (zero when unranged; binary32 for FLOAT,
+    two's complement for signed), the Modbus word address, and the
+    description (NUL included), in table order. The device's id and
+    $meta report the same number for the same table."""
+    h = 2166136261
+
+    def mix(data):
+        nonlocal h
+        for b in data:
+            h = ((h ^ b) * 16777619) & 0xFFFFFFFF
+
+    def bits(t, v):
+        if v is None:
+            return b"\0\0\0\0"
+        if t == "FLOAT":
+            return struct.pack("<f", v)
+        if t in ("I8", "I16", "I32"):
+            return struct.pack("<i", v)
+        return struct.pack("<I", v)
+
+    for name, e in schema.items():
+        mix(name.encode("utf-8") + b"\0")
+        t = e["type"]
+        mix(bytes([_TYPE_ENUM[t], 0 if e["perm"] == "RO" else 1]))
+        mix(bits(t, e.get("min")) + bits(t, e.get("max")))
+        mix(struct.pack("<H", e.get("modbus", 0) or 0))
+        mix((e.get("desc") or "").encode("utf-8") + b"\0")
+    return h
+
+
 class RegtableClient:
     """Base class for device clients. Generated subclasses set
     __schema__ and define one typed property per register;
@@ -308,6 +345,7 @@ class RegtableClient:
 
     __slots__ = ("_t", "_timeout", "_dead")
     __schema__ = {}           # name -> {"type", "perm", "min", "max", "modbus"}
+    __silicon__ = {}          # name -> PERIPHERAL.REGISTER[.FIELD] for registers read from the chip
 
     def __init__(self, transport, *, timeout=3.0, verify=True):
         object.__setattr__(self, "_t", transport)
@@ -531,6 +569,37 @@ class RegtableClient:
                    {"__slots__": (), "__schema__": schema,
                     "__doc__": f"discovered: {len(schema)} registers."})
         return sub(transport, timeout=timeout, verify=False)
+
+    # -- who it is ------------------------------------------------------ #
+
+    def identity(self):
+        """The device's `id --json`: the strings its firmware set
+        (device, fw, hash, chip), its build (built, compiler), the
+        regtable version, the register count, and the table's schema
+        fingerprint. Strings the firmware did not set are absent. The
+        count and the fingerprint are checked against the table this
+        client holds: an answer about another table closes the
+        connection. The strings are the device's own, returned as
+        sent; regtable fetch renders them as printable ASCII."""
+        cmd = "id --json"
+        obj = self._expect_dict(self._cmd_json(cmd), cmd)
+        if "error" in obj:
+            raise RemoteError("id", obj["error"])
+        if not (isinstance(obj.get("regtable"), str) and _is_int(obj.get("regs"))
+                and isinstance(obj.get("schema"), str)
+                and len(obj["schema"]) == 8 and all(c in "0123456789abcdef" for c in obj["schema"])):
+            self._fail(f"answer to {cmd!r} is not an identity: {obj!r}")
+        # the count and the fingerprint are the table's, which this
+        # client already holds
+        if obj["regs"] != len(self.__schema__):
+            self._fail(f"identity says {obj['regs']} registers, the table has {len(self.__schema__)}")
+        want = f"{schema_fingerprint(self.__schema__):08x}"
+        if obj["schema"] != want:
+            self._fail(f"identity says schema {obj['schema']}, the table's is {want}")
+        for k in ("device", "fw", "hash", "chip", "built", "compiler"):
+            if k in obj and not isinstance(obj[k], str):
+                self._fail(f"identity field {k!r} is not text: {obj[k]!r}")
+        return obj
 
     # -- what is there ------------------------------------------------ #
 

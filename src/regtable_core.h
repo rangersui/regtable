@@ -16,6 +16,10 @@ extern "C" {
 #error "REGTABLE_MAX_ENTRIES must be 1..65535 (the table count is uint16_t)"
 #endif
 
+/*  The library's own version, reported by the CLI's `id` and the MQTT
+ *  $id metadata. */
+#define REGTABLE_VERSION "0.1.0"
+
 /* -- type enum ------------------------------------------- */
 typedef enum RegType {
     REG_U8,
@@ -118,6 +122,31 @@ RegResult reg_table_init(RegTable *t, const RegEntry *entries);
 
 /*  Find entry by name. Returns NULL if not found. */
 const RegEntry *reg_find(const RegTable *t, const char *name);
+
+/*  The table's fingerprint: FNV-1a over every entry's name, type,
+ *  perm, range, Modbus address, and description, in table order.
+ *  The same registers in the same shape give the same value; a
+ *  renamed register, a changed range, a moved entry gives another.
+ *  The CLI's `id` and the MQTT metadata report it, so a host can tell
+ *  which table it is talking to before comparing anything else. */
+uint32_t reg_table_schema(const RegTable *t);
+
+/* -- identity -------------------------------------------- */
+/*  Who the device is, as strings the application sets (from its own
+ *  build: a version, a commit hash) and hands to the adapters with
+ *  regcli_set_identity / regmqtt_set_identity. Any field may be NULL
+ *  and is then left out. The table holds numbers; these are text,
+ *  so they travel on their own channel: the CLI's `id` and the MQTT
+ *  $id metadata, beside what the build knows (date, compiler) and
+ *  what the table knows (count, schema). */
+typedef struct RegIdentity {
+    const char *device;         /* "reactor-01"                    */
+    const char *fw;             /* "1.2.0"                         */
+    const char *hash;           /* "a3f7c21"                       */
+    const char *chip;           /* "STM32L053" (the generated
+                                   REGTABLE_GEN_<DEVICE>_CHIP when a
+                                   YAML picks from an SVD)           */
+} RegIdentity;
 
 /*  Typed core path. Every protocol adapter goes through here;
  *  perm, range, and on_write all happen in reg_set_raw.

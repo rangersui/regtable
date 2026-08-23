@@ -112,6 +112,7 @@ codegen: $(EXAMPLE)
 	$(PY) python/tests/client_test.py gen/cli$(EXE) ./$(EXAMPLE) gen
 	$(RT) watch --yaml tools/example.yaml --every 0 --count 1 --json --pipe ./gen/cli$(EXE)
 	$(RT) watch temp led --every 0 --count 1 --pipe ./gen/cli$(EXE)
+	$(RT) fetch --pipe ./gen/cli$(EXE)
 
 # Coverage-guided search for inputs the regression test did not think
 # of. Seeds a corpus with a few valid lines, then runs for FUZZ_TIME

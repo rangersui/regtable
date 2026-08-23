@@ -59,16 +59,21 @@ extern "C" {
  * joins later finds the table without asking:
  *
  *   <prefix>/$meta/$table   {"count":4,"schema":"1a2b3c4d"}
+ *   <prefix>/$meta/$id      {"device":"uno","fw":"1.0","chip":"ATmega328P","built":"Aug 22 2026 10:20:30",
+ *                            "regtable":"0.1.0","regs":4,"schema":"1a2b3c4d"}
+ *                           (strings set with regmqtt_set_identity; absent
+ *                           ones left out; the compiler string stays on the
+ *                           CLI's `id`, it is long)
  *   <prefix>/$meta/<name>   one JSON object per register: the shape
  *                           of a list --json entry minus value, plus
  *                           its index in the table and the schema:
  *     {"name":"led","type":"BOOL","perm":"RW","index":0,"desc":"Built-in LED","schema":"1a2b3c4d"}
  *     {"name":"gain","type":"FLOAT","perm":"RW","index":3,"min":0.5,"max":2.5,"schema":"1a2b3c4d"}
  *
- * schema is the table's fingerprint: FNV-1a over every meta body in
- * table order, so the same registers in the same shape give the
- * same value and a renamed register, a changed range, or a moved
- * entry gives another. Retained messages outlive the firmware that
+ * schema is the table's fingerprint, reg_table_schema(): the same
+ * registers in the same shape give the same value and a renamed
+ * register, a changed range, or a moved entry gives another; the
+ * CLI's `id` reports the same number. Retained messages outlive the firmware that
  * published them, and the fingerprint is what tells a current meta
  * from a leftover: a host takes $table, keeps only metas whose
  * schema matches it, and has the whole table once those cover
@@ -118,6 +123,7 @@ typedef struct RegMqtt {
     int  (*publish)(const char *topic, const char *payload,
                     bool retain, void *user);
     void  *user;
+    const RegIdentity *identity;   /* strings $id carries; NULL = none set */
     uint32_t shadow[REGTABLE_MAX_ENTRIES];
     uint32_t synced[(REGTABLE_MAX_ENTRIES + 31) / 32];
 } RegMqtt;
@@ -151,11 +157,23 @@ uint16_t regmqtt_publish_all(RegMqtt *mq);
  *  up on the state topic at the next regmqtt_poll. */
 RegResult regmqtt_handle(RegMqtt *mq, const char *topic, const char *payload);
 
+/*  The strings $id carries. The adapter keeps the pointer, as it
+ *  keeps the prefix and the table: the struct and the strings it
+ *  points to stay as they are for as long as they are set (a
+ *  static const RegIdentity, as the examples have it). Call after
+ *  regmqtt_init: the $id payload is built here, with the table's
+ *  count and fingerprint, and REG_ERR_TABLE says it does not fit
+ *  REGTABLE_MQTT_META_SIZE (the adapter keeps the identity it had).
+ *  What this accepts, announce publishes. NULL clears the strings.
+ *  Stack while it runs: REGTABLE_MQTT_META_SIZE bytes. */
+RegResult regmqtt_set_identity(RegMqtt *mq, const RegIdentity *identity);
+
 /*  Publish the table's self-description, retained: the descriptor
- *  <prefix>/$meta/$table and one <prefix>/$meta/<name> per entry,
- *  all carrying the table's fingerprint (see above). Call after
- *  each (re)connect, before regmqtt_publish_all. Returns the number
- *  of messages publish() accepted (count + 1 when all went out,
+ *  <prefix>/$meta/$table, the identity <prefix>/$meta/$id, and one
+ *  <prefix>/$meta/<name> per entry, all carrying the table's
+ *  fingerprint (see above). Call after each (re)connect, before
+ *  regmqtt_publish_all. Returns the number of messages publish()
+ *  accepted (count + 2 when all went out,
  *  which is why it is wider than a count); a
  *  refusal is not retried here, call again. Stack while it runs:
  *  REGTABLE_MQTT_TOPIC_SIZE + REGTABLE_MQTT_META_SIZE bytes. */

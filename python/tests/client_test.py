@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "python"))
 
 from regtable.client import (  # noqa: E402
-    PipeTransport, RemoteError, SchemaDriftError, TransportError)
+    PipeTransport, RemoteError, SchemaDriftError, TransportError, schema_fingerprint)
 from regtable import build_client  # noqa: E402
 
 failures = 0
@@ -139,6 +139,14 @@ def main():
 
         dev.verify()                      # still in sync after traffic
         check(True, "re-verify passes")
+
+        ident = dev.identity()
+        check(ident.get("device") == "demo" and ident.get("fw") == "test" and "hash" not in ident,
+              f"identity strings from the firmware: {ident}")
+        check(ident.get("regs") == 8 and isinstance(ident.get("regtable"), str)
+              and "built" in ident, f"identity facts: {ident}")
+        check(ident.get("schema") == f"{schema_fingerprint(Dev.__schema__):08x}",
+              f"the device's fingerprint is the one computed from the schema: {ident.get('schema')}")
 
     # -- timeout poisoning: no request ids on the wire ---------------- #
     class ScriptedTransport:
@@ -263,6 +271,36 @@ def main():
     if floaty != table_json:
         expect_raises(SchemaDriftError, "non-numeric float bound is drift, not a crash",
                       lambda: Dev(ScriptedTransport([floaty]), timeout=0.2))
+
+    # an identity of the wrong shape closes the connection
+    fp = f"{schema_fingerprint(Dev.__schema__):08x}"
+    t = ScriptedTransport([table_json, '{"regtable":"0.1.0","regs":"8","schema":"' + fp + '"}'])
+    expect_raises(TransportError, "identity: regs must be an int", lambda: Dev(t, timeout=0.2).identity())
+    t = ScriptedTransport([table_json, '{"regtable":"0.1.0","regs":8,"schema":"xyz"}'])
+    expect_raises(TransportError, "identity: schema must be 8 hex digits", lambda: Dev(t, timeout=0.2).identity())
+    t = ScriptedTransport([table_json, '{"device":5,"regtable":"0.1.0","regs":8,"schema":"' + fp + '"}'])
+    expect_raises(TransportError, "identity: device must be text", lambda: Dev(t, timeout=0.2).identity())
+    t = ScriptedTransport([table_json, '{"regtable":"0.1.0","regs":7,"schema":"' + fp + '"}'])
+    expect_raises(TransportError, "identity: a count other than the table's is refused",
+                  lambda: Dev(t, timeout=0.2).identity())
+    t = ScriptedTransport([table_json, '{"regtable":"0.1.0","regs":-1,"schema":"' + fp + '"}'])
+    expect_raises(TransportError, "identity: a negative count is refused",
+                  lambda: Dev(t, timeout=0.2).identity())
+    t = ScriptedTransport([table_json, '{"regtable":"0.1.0","regs":8,"schema":"deadbeef"}'])
+    expect_raises(TransportError, "identity: a fingerprint other than the table's is refused",
+                  lambda: Dev(t, timeout=0.2).identity())
+    t = ScriptedTransport([table_json, '{"built":"x","regtable":"0.1.0","regs":8,"schema":"' + fp + '"}'])
+    check(Dev(t, timeout=0.2).identity()["schema"] == fp, "identity: the minimal answer passes")
+    # the fingerprint follows the core's definition: every field moves it
+    base = {"a": {"type": "U8", "perm": "RO", "min": None, "max": None, "modbus": 0, "desc": ""}}
+    def fpo(**kw):
+        return schema_fingerprint({"a": {**base["a"], **kw}})
+    check(len({fpo(), fpo(perm="RW"), fpo(type="U16"), fpo(min=0, max=5), fpo(modbus=3), fpo(desc="x"),
+               schema_fingerprint({"b": base["a"]})}) == 7, "schema_fingerprint: name/type/perm/range/modbus/desc all count")
+    check(fpo(type="FLOAT", min=0.5, max=2.5) != fpo(type="FLOAT", min=0.5, max=2.0)
+          and fpo(type="I8", min=-5, max=5) != fpo(type="I8", min=-4, max=5)
+          and fpo() == fpo(min=0, max=0) and schema_fingerprint({}) == 2166136261,
+          "schema_fingerprint: float and signed bounds by their bits, unranged equals 0..0, empty is the FNV offset")
 
     # a single get is held to the declared domain, like the list is
     t = ScriptedTransport([table_json, '{"value":300}'])
@@ -488,6 +526,31 @@ def main():
     check(_cli.main(["watch", "temp", "--every", "0", "--count", "1",
                      "--pipe", cli_bin, "-u", "--child-option"]) == 0,
           "watch over a pipe with child options runs")
+    check(_cli.main(["fetch", "--pipe", cli_bin]) == 0, "fetch over a pipe runs")
+    txt = _cli.fetch_text({"device": "demo", "fw": "1.0", "chip": "STM32L053", "regtable": "0.1.0", "regs": 2, "schema": "0a0b0c0d"},
+                          {"a": {"perm": "RW"}, "b": {"perm": "RO"}}, ["USART2", "TIM3", "GPIOA"])
+    check("regtable" in txt and "USART2 ----|" in txt and "|---- TIM3" in txt and "GPIOA ----|" in txt
+          and "demo @ STM32L053" in txt and " fw        1.0" in txt
+          and "regs      2 (1 RW, 1 RO)" in txt and all(ord(c) < 128 for c in txt),
+          f"fetch_text draws pins and facts in ASCII:\n{txt}")
+    # the device's strings are rendered printable: no injected lines, no
+    # terminal control sequences, no non-ASCII reaches the terminal
+    hostile = {"device": "board\nFAKE", "fw": "1.0\x1b[31mRED", "chip": "\u00b5C", "hash": "a\tb",
+               "regtable": "0.1.0", "regs": 0, "schema": "0a0b0c0d"}
+    txt = _cli.fetch_text(hostile, {}, [])
+    check(all(32 <= ord(c) < 127 or c == "\n" for c in txt) and "board\\x0aFAKE @ \\u00b5C" in txt
+          and "1.0\\x1b[31mRED (a\\x09b)" in txt and "\x1b" not in txt and "FAKE" not in txt.split("\n")[0],
+          f"fetch_text renders hostile identity strings as printable ASCII:\n{txt}")
+    # the pins come from the generated class's record of its SVD picks,
+    # never from descriptions; a discovered device has none
+    Sil = build_client(ROOT / "python" / "tests" / "svd_demo.yaml")
+    check(_cli.silicon_pins(Sil) == ["USART2", "TIM3", "GPIOA", "ADC1"],
+          f"silicon_pins: peripherals in table order, each once: {_cli.silicon_pins(Sil)}")
+    check(Sil.__silicon__["timer_count"] == "TIM3.CNT" and Sil.__silicon__["adc1_ch_dr"] == "ADC1.CH.DR"
+          and "temp" not in Sil.__silicon__ and "led" not in Sil.__silicon__,
+          f"__silicon__ maps silicon registers to their SVD path: {Sil.__silicon__}")
+    check(_cli.silicon_pins(Dev) == [] and _cli.silicon_pins(_cli.RegtableClient) == [],
+          "no SVD picks, no pins")
     check(_cli.main(["watch", "--yaml", str(ROOT / "tools" / "example.yaml"),
                      "--every", "0", "--count", "1", "--pipe", cli_bin]) == 0,
           "watch with --yaml runs")

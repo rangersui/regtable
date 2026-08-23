@@ -37,6 +37,8 @@ int main(void)
     if (reg_table_init(&table, demo_registry) != REG_OK) return 1;
     regcli_init(&cli, &table, tx);
     cli.echo = false;
+    static const RegIdentity who = { .device = REGTABLE_GEN_DEMO_NAME, .fw = "test" };
+    regcli_set_identity(&cli, &who);
 
     int c;
     while ((c = getchar()) != EOF) {

@@ -83,6 +83,11 @@ static const char *sent(const char *topic)
     return NULL;
 }
 
+static bool has(const char *hay, const char *needle)
+{
+    return hay && strstr(hay, needle) != NULL;
+}
+
 /* -- harness ------------------------------------------------ */
 
 static RegTable table;
@@ -359,8 +364,8 @@ static void test_announce(void)
     CHECK(regmqtt_announce(NULL) == 0);
 
     cap_reset();
-    CHECK(regmqtt_announce(&mq) == 9);              /* $table + 8 metas */
-    CHECK(cap_n == 9);
+    CHECK(regmqtt_announce(&mq) == 10);             /* $table + $id + 8 metas */
+    CHECK(cap_n == 10);
     for (int i = 0; i < cap_n; i++) CHECK(cap[i].retain);
 
     /* the descriptor carries the count and the fingerprint; every
@@ -370,6 +375,43 @@ static void test_announce(void)
     char fp[9];
     snprintf(fp, sizeof(fp), "%s", schema_of(desc) ? schema_of(desc) : "--------");
     CHECK(strlen(fp) == 8 && strspn(fp, "0123456789abcdef") == 8);
+    /* the same number the core computes and the CLI's id reports */
+    char core_fp[9];
+    snprintf(core_fp, sizeof(core_fp), "%08lx", (unsigned long)reg_table_schema(&table));
+    CHECK(strcmp(fp, core_fp) == 0);
+    /* the identity: build and table facts, no application strings yet */
+    const char *idp = sent("dev/$meta/$id");
+    CHECK(idp != NULL && strncmp(idp, "{\"built\":\"", 10) == 0);
+    CHECK(has(idp, "\"regtable\":\"" REGTABLE_VERSION "\",\"regs\":8,\"schema\":\""));
+    CHECK(!has(idp, "device"));
+    static const RegIdentity who = { .device = "bench", .fw = "1.2.0", .hash = "a3f7c21" };
+    /* an identity needs a bound adapter: the count and the fingerprint are in $id */
+    CHECK(regmqtt_set_identity(&unbound, &who) == REG_ERR_TABLE);
+    CHECK(regmqtt_set_identity(NULL, &who) == REG_ERR_TABLE);
+    /* (the strings below fit the default scratch with room to spare) */
+    CHECK(regmqtt_set_identity(&mq, &who) == REG_OK);
+    cap_reset();
+    CHECK(regmqtt_announce(&mq) == 10);
+    CHECK(has(sent("dev/$meta/$id"), "{\"device\":\"bench\",\"fw\":\"1.2.0\",\"hash\":\"a3f7c21\",\"built\":\""));
+    /* an identity whose payload would not fit the scratch is refused
+     * when set, and the one before it stays: announce never skips $id
+     * and never leaves an older retained $id standing for the device */
+    static char longdev[REGTABLE_MQTT_META_SIZE + 1];
+    memset(longdev, 'x', sizeof(longdev) - 1);
+    static RegIdentity big;
+    big.device = longdev;
+    CHECK(regmqtt_set_identity(&mq, &big) == REG_ERR_TABLE);
+    cap_reset();
+    CHECK(regmqtt_announce(&mq) == 10);
+    CHECK(has(sent("dev/$meta/$id"), "{\"device\":\"bench\",\"fw\":\"1.2.0\""));
+    static const RegIdentity chipped = { .device = "bench", .chip = "STM32L053" };
+    CHECK(regmqtt_set_identity(&mq, &chipped) == REG_OK);
+    cap_reset();
+    CHECK(regmqtt_announce(&mq) == 10);
+    CHECK(has(sent("dev/$meta/$id"), "{\"device\":\"bench\",\"chip\":\"STM32L053\",\"built\":\""));
+    CHECK(regmqtt_set_identity(&mq, NULL) == REG_OK);
+    cap_reset();
+    CHECK(regmqtt_announce(&mq) == 10);
     for (int i = 0; i < cap_n; i++) {
         const char *s = schema_of(cap[i].payload);
         CHECK(s != NULL && strcmp(s, fp) == 0);
@@ -388,7 +430,7 @@ static void test_announce(void)
     /* announcing again gives the same fingerprint: it is a function
      * of the table, not of the moment */
     cap_reset();
-    CHECK(regmqtt_announce(&mq) == 9);
+    CHECK(regmqtt_announce(&mq) == 10);
     CHECK(strcmp(schema_of(sent("dev/$meta/$table")), fp) == 0);
 
     /* a refusing broker: counted honestly, nothing else happens */
@@ -416,7 +458,7 @@ static void test_announce(void)
     CHECK(reg_table_init(&t2, reg2) == REG_OK);
     CHECK(regmqtt_init(&m2, &t2, "plant/boiler", cap_publish, NULL) == REG_OK);
     cap_reset();
-    CHECK(regmqtt_announce(&m2) == 3);
+    CHECK(regmqtt_announce(&m2) == 4);
     const char *d2 = sent("plant/boiler/$meta/$table");
     CHECK(d2 != NULL && strncmp(d2, "{\"count\":2,", 11) == 0);
     char fp2[9];
@@ -440,18 +482,19 @@ static void test_announce(void)
     CHECK(reg_table_init(&t3, reg3) == REG_OK);
     CHECK(regmqtt_init(&m3, &t3, "plant/boiler", cap_publish, NULL) == REG_OK);
     cap_reset();
-    CHECK(regmqtt_announce(&m3) == 3);
+    CHECK(regmqtt_announce(&m3) == 4);
     const char *d3 = sent("plant/boiler/$meta/$table");
     CHECK(d3 != NULL && strncmp(d3, "{\"count\":2,", 11) == 0);
     CHECK(schema_of(d3) != NULL && strcmp(schema_of(d3), fp2) != 0);
 
     /* announce then publish_all: metadata first, state second */
     cap_reset();
-    CHECK(regmqtt_announce(&m2) == 3);
+    CHECK(regmqtt_announce(&m2) == 4);
     CHECK(regmqtt_publish_all(&m2) == 2);
-    CHECK(cap_n == 5);
+    CHECK(cap_n == 6);
     CHECK(strcmp(cap[0].topic, "plant/boiler/$meta/$table") == 0);
-    CHECK(strcmp(cap[3].topic, "plant/boiler/mode") == 0);
+    CHECK(strcmp(cap[1].topic, "plant/boiler/$meta/$id") == 0);
+    CHECK(strcmp(cap[4].topic, "plant/boiler/mode") == 0);
 
     /* what init accepts, announce can publish: a name whose
      * metadata (without description) would not fit the meta scratch
@@ -485,7 +528,7 @@ static void test_announce(void)
     CHECK(rp == (room >= 117 ? REG_OK : REG_ERR_TABLE));
     if (rp == REG_OK) {
         cap_reset();
-        CHECK(regmqtt_announce(&m5) == 2);          /* descriptor + the meta, minus its desc */
+        CHECK(regmqtt_announce(&m5) == 3);          /* descriptor + id + the meta, minus its desc */
         const char *pm = sent("d/$meta/a234567890123456789012345678901");
         CHECK(pm != NULL && strstr(pm, "\"modbus\":65535") != NULL && strstr(pm, "desc") == NULL);
         CHECK(strlen(pm) < REGTABLE_MQTT_META_SIZE);
@@ -514,8 +557,8 @@ static void test_announce(void)
     longpfx[REGTABLE_MQTT_TOPIC_SIZE - 14] = '\0';   /* exactly fits "/$meta/$table" */
     CHECK(regmqtt_init(&m4, &t4, longpfx, cap_publish, NULL) == REG_OK);
     cap_reset();
-    CHECK(regmqtt_announce(&m4) == 1);
-    CHECK(cap_n == 1 && strlen(cap[0].topic) == REGTABLE_MQTT_TOPIC_SIZE - 1);
+    CHECK(regmqtt_announce(&m4) == 2);
+    CHECK(cap_n == 2 && strlen(cap[0].topic) == REGTABLE_MQTT_TOPIC_SIZE - 1);
     CHECK(strncmp(cap[0].payload, "{\"count\":0,", 11) == 0);
 }
 

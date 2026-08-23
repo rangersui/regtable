@@ -184,6 +184,8 @@ int main(void)
     RegCli cli;
     regcli_init(&cli, &table, tx);
     cli.echo = false;   /* the terminal already echoes what you type */
+    static const RegIdentity who = { .device = "demo", .fw = "1.0" };   /* `id` reports these */
+    regcli_set_identity(&cli, &who);
 
     printf("regtable desktop example. Type 'help'.\n> ");
     fflush(stdout);

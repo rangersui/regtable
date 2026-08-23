@@ -120,6 +120,8 @@ code {
   padding: 22px 26px;
   white-space: pre;
   font-family: var(--mono);
+  font-variant-ligatures: none;     /* the chip is drawn in plain ASCII; no joined dashes */
+  font-feature-settings: "liga" 0, "calt" 0;
   font-size: 13.5px;
   line-height: 1.7;
   color: var(--console-text);
@@ -377,6 +379,24 @@ const LINES = [
   ['p', '> '], ['t', 'info interval --json'],
   ['r', '{"name":"interval","type":"U16","perm":"RW","value":1000,' +
         '"min":100,"max":60000,"modbus":1}'],
+  ['p', '> '], ['t', 'fetch'],
+  ['r', ''],
+  ['r', '           | | | | | | | | |'],
+  ['r', '        +--+-+-+-+-+-+-+-+-+--+'],
+  ['r', '    ----| o                   |----'],
+  ['r', '    ----|       regtable      |----'],
+  ['r', '    ----|        v0.1.0       |----'],
+  ['r', '    ----|                     |----'],
+  ['r', '        +--+-+-+-+-+-+-+-+-+--+'],
+  ['r', '           | | | | | | | | |'],
+  ['r', ''],
+  ['r', 'device    reactor-01'],
+  ['r', 'fw        1.2.0'],
+  ['r', 'chip      STM32L053'],
+  ['r', 'built     Aug 23 2026 11:05:06'],
+  ['r', 'regtable  0.1.0'],
+  ['r', 'regs      3'],
+  ['r', 'schema    ba2db3ec'],
 ];
 
 const term = document.getElementById('term');

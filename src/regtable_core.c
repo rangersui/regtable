@@ -110,6 +110,33 @@ RegResult reg_table_init(RegTable *t, const RegEntry *entries)
     return REG_OK;
 }
 
+uint32_t reg_table_schema(const RegTable *t)
+{
+    uint32_t h = 2166136261u;
+    if (!t || !t->entries) return h;
+    for (const RegEntry *e = t->entries; e->name != NULL; e++) {
+        const char *s;
+        uint8_t bytes[16];
+        for (s = e->name; ; s++) {          /* the name, NUL included */
+            h ^= (unsigned char)*s; h *= 16777619u;
+            if (*s == '\0') break;
+        }
+        bytes[0]  = (uint8_t)e->type;
+        bytes[1]  = (uint8_t)e->perm;
+        bytes[2]  = (uint8_t)(e->min.u);        bytes[3]  = (uint8_t)(e->min.u >> 8);
+        bytes[4]  = (uint8_t)(e->min.u >> 16);  bytes[5]  = (uint8_t)(e->min.u >> 24);
+        bytes[6]  = (uint8_t)(e->max.u);        bytes[7]  = (uint8_t)(e->max.u >> 8);
+        bytes[8]  = (uint8_t)(e->max.u >> 16);  bytes[9]  = (uint8_t)(e->max.u >> 24);
+        bytes[10] = (uint8_t)(e->modbus_addr);  bytes[11] = (uint8_t)(e->modbus_addr >> 8);
+        for (int i = 0; i < 12; i++) { h ^= bytes[i]; h *= 16777619u; }
+        for (s = e->description ? e->description : ""; ; s++) {
+            h ^= (unsigned char)*s; h *= 16777619u;
+            if (*s == '\0') break;
+        }
+    }
+    return h;
+}
+
 const RegEntry *reg_find(const RegTable *t, const char *name)
 {
     for (const RegEntry *e = t->entries; e->name != NULL; e++) {

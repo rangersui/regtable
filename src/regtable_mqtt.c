@@ -84,7 +84,25 @@ RegResult regmqtt_init(RegMqtt *mq, RegTable *table, const char *prefix,
     mq->prefix  = prefix;
     mq->publish = publish;
     mq->user    = user;
+    mq->identity = NULL;
     memset(mq->synced, 0, sizeof(mq->synced));
+    return REG_OK;
+}
+
+static bool id_payload(const RegMqtt *mq, const RegIdentity *id, uint32_t fp,
+                       char *buf, size_t size);
+
+RegResult regmqtt_set_identity(RegMqtt *mq, const RegIdentity *identity)
+{
+    char scratch[REGTABLE_MQTT_META_SIZE];
+    /* bound first: the count and the fingerprint are part of $id */
+    if (!mq || !mq->table) return REG_ERR_TABLE;
+    /* what this accepts, announce publishes: the payload is built
+     * here once, into the same size of buffer announce uses */
+    if (!id_payload(mq, identity, reg_table_schema(mq->table), scratch, sizeof(scratch))) {
+        return REG_ERR_TABLE;
+    }
+    mq->identity = identity;
     return REG_OK;
 }
 
@@ -262,22 +280,27 @@ static void meta_body(Appender *a, const RegEntry *e, uint16_t index, bool with_
     }
 }
 
-/*  FNV-1a over the bytes of every meta body, in table order: the
- *  table's fingerprint. Two firmwares with the same registers in the
- *  same shape share it; a renamed register, a changed range, a moved
- *  entry changes it. */
-static uint32_t fnv1a(uint32_t h, const char *s, size_t n)
-{
-    for (size_t i = 0; i < n; i++) {
-        h ^= (unsigned char)s[i];
-        h *= 16777619u;
-    }
-    return h;
-}
-
 static bool fits(int n, size_t size)
 {
     return n > 0 && (size_t)n < size;
+}
+
+/*  The $id payload: the identity's strings (absent ones left out),
+ *  the build, the table's count and fingerprint. False when it does
+ *  not fit size; set_identity asks this so announce never meets an
+ *  identity it cannot send. */
+static bool id_payload(const RegMqtt *mq, const RegIdentity *id, uint32_t fp,
+                       char *buf, size_t size)
+{
+    Appender a = { buf, size, 0, false };
+    ap_putc(&a, '{');
+    if (id && id->device) { ap_puts(&a, "\"device\":"); ap_json_str(&a, id->device); ap_putc(&a, ','); }
+    if (id && id->fw)     { ap_puts(&a, "\"fw\":");     ap_json_str(&a, id->fw);     ap_putc(&a, ','); }
+    if (id && id->hash)   { ap_puts(&a, "\"hash\":");   ap_json_str(&a, id->hash);   ap_putc(&a, ','); }
+    if (id && id->chip)   { ap_puts(&a, "\"chip\":");   ap_json_str(&a, id->chip);   ap_putc(&a, ','); }
+    ap_puts(&a, "\"built\":\"" __DATE__ " " __TIME__ "\",\"regtable\":\"" REGTABLE_VERSION "\"");
+    ap_printf(&a, ",\"regs\":%u,\"schema\":\"%08lx\"}", (unsigned)mq->table->count, (unsigned long)fp);
+    return !a.overflow;
 }
 
 /*  Does the entry's metadata, description aside, fit the scratch
@@ -295,18 +318,9 @@ uint32_t regmqtt_announce(RegMqtt *mq)
     char topic[REGTABLE_MQTT_TOPIC_SIZE];
     char payload[REGTABLE_MQTT_META_SIZE];
     uint32_t sent = 0;
-    uint32_t fp = 2166136261u;
 
     if (!mq || !mq->table) return 0;            /* never bound: nothing to describe */
-
-    /* pass 1: the fingerprint, over exactly the bodies pass 2 sends
-     * (init proved every body fits without its description, and the
-     * description degrades inside meta_body) */
-    for (const RegEntry *e = mq->table->entries; e->name != NULL; e++) {
-        Appender a = { payload, META_BODY_SIZE, 0, false };
-        meta_body(&a, e, entry_index(mq, e), true);
-        fp = fnv1a(fp, a.buf, a.len);
-    }
+    uint32_t fp = reg_table_schema(mq->table);   /* the same number the CLI's id reports */
 
     /* the descriptor: how many metas make the table, and which ones */
     int n = snprintf(topic, sizeof(topic), "%s/$meta/$table", mq->prefix);
@@ -316,7 +330,17 @@ uint32_t regmqtt_announce(RegMqtt *mq)
         if (fits(n, sizeof(payload)) && mq->publish(topic, payload, true, mq->user) == 0) sent++;
     }
 
-    /* pass 2: one meta per entry, each carrying the fingerprint */
+    /* the identity: who this is, beside the table's shape (it fits:
+     * set_identity built the same payload before accepting it) */
+    n = snprintf(topic, sizeof(topic), "%s/$meta/$id", mq->prefix);
+    if (fits(n, sizeof(topic)) && id_payload(mq, mq->identity, fp, payload, sizeof(payload))
+            && mq->publish(topic, payload, true, mq->user) == 0) {
+        sent++;
+    }
+
+    /* one meta per entry, each carrying the fingerprint (init proved
+     * every body fits without its description; the description
+     * degrades inside meta_body) */
     for (const RegEntry *e = mq->table->entries; e->name != NULL; e++) {
         Appender a = { payload, META_BODY_SIZE, 0, false };
         meta_body(&a, e, entry_index(mq, e), true);

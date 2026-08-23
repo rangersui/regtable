@@ -14,6 +14,7 @@ pip install regtable
 regtable gen device.yaml -o gen            # registers.c/.h/.md + <device>_client.py; `svd:` blocks pick silicon registers
 regtable connect -p COM6                   # the board's own table, then a REPL with `dev`
 regtable watch a0 led -p COM6              # print changes; --json for scripts
+regtable fetch -p COM6                     # the device as a chip: identity and table (--yaml puts the SVD picks on its pins)
 regtable connect -p COM6 --yaml device.yaml  # typed client, verified against the board first
 regtable serve                             # the Web Serial panel on localhost
 ```
@@ -37,6 +38,7 @@ with UnoDevice.serial("COM6") as dev:
     dev.a0 = 1                # AttributeError: read-only, there is no setter
     dev.registers()           # the table the client was generated from
     dev.snapshot()            # every value, one round trip
+    dev.identity()            # who the device is: fw, build, regtable version, schema
 ```
 
 Without a YAML, the device's own table:

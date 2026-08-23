@@ -573,6 +573,74 @@ static void test_overflow_line(void)
     CHECK(setpoint == before);
 }
 
+static void test_id(void)
+{
+    char want[64];
+    snprintf(want, sizeof(want), "schema    %08lx\r\n", (unsigned long)reg_table_schema(&table));
+    /* nothing set: the build's and the table's facts only */
+    CONTAINS("id", "built     ");
+    CONTAINS("id", "regtable  " REGTABLE_VERSION "\r\n");
+    CONTAINS("id", "regs      11\r\n");
+    CONTAINS("id", want);
+    cases++; if (strstr(run("id"), "device") != NULL) { failures++; printf("FAIL %s:%d id shows a device with none set\n", __FILE__, __LINE__); }
+    CONTAINS("id --json", "{\"built\":\"");
+    CONTAINS("id --json", "\"regtable\":\"" REGTABLE_VERSION "\",\"regs\":11,\"schema\":\"");
+    EXPECT  ("id extra", "ERR: usage: id\r\n");
+    EXPECT  ("id extra --json", "{\"error\":\"ERR: usage: id\"}\r\n");
+
+    /* the application's strings, absent ones left out */
+    static const RegIdentity who = { .device = "bench", .fw = "1.2.0" };
+    regcli_set_identity(&cli, &who);
+    CONTAINS("id", "device    bench\r\nfw        1.2.0\r\nbuilt     ");
+    CONTAINS("id --json", "{\"device\":\"bench\",\"fw\":\"1.2.0\",\"built\":\"");
+    cases++; if (strstr(run("id --json"), "hash") != NULL) { failures++; printf("FAIL %s:%d id shows a NULL hash\n", __FILE__, __LINE__); }
+    static const RegIdentity quoted = { .device = "say \"hi\"", .hash = "a\\b" };
+    regcli_set_identity(&cli, &quoted);
+    CONTAINS("id --json", "{\"device\":\"say \\\"hi\\\"\",\"hash\":\"a\\\\b\",\"built\":");
+    static const RegIdentity chipped = { .device = "bench", .chip = "STM32L053" };
+    regcli_set_identity(&cli, &chipped);
+    CONTAINS("id", "device    bench\r\nchip      STM32L053\r\nbuilt     ");
+    CONTAINS("id --json", "{\"device\":\"bench\",\"chip\":\"STM32L053\",\"built\":\"");
+    regcli_set_identity(&cli, NULL);
+    cases++; if (strstr(run("id"), "device") != NULL) { failures++; printf("FAIL %s:%d identity not cleared\n", __FILE__, __LINE__); }
+
+    /* fetch: the package, the die with the version, then id's lines */
+    CONTAINS("fetch", "        +--+-+-+-+-+-+-+-+-+--+\r\n    ----| o                   |----\r\n");
+    CONTAINS("fetch", "    ----|       regtable      |----\r\n    ----|        v" REGTABLE_VERSION "       |----\r\n");
+    CONTAINS("fetch", "regtable  " REGTABLE_VERSION "\r\nregs      11\r\n");
+    CONTAINS("fetch --json", "\"regtable\":\"" REGTABLE_VERSION "\",\"regs\":11,\"schema\":\"");
+    EXPECT  ("fetch now", "ERR: usage: fetch\r\n");
+    CONTAINS("help", "  fetch               show the device as a chip\r\n");
+
+    /* the fingerprint is a function of the table's shape */
+    static uint8_t a = 0, b = 0;
+    static const RegEntry t1[] = {
+        { .name = "a", .ptr = &a, .type = REG_U8, .perm = REG_RW, .min.u = 1, .max.u = 9 },
+        { .name = "b", .ptr = &b, .type = REG_U8, .perm = REG_RO, .description = "x" },
+        { .name = NULL } };
+    static const RegEntry t2[] = {                /* b renamed */
+        { .name = "a", .ptr = &a, .type = REG_U8, .perm = REG_RW, .min.u = 1, .max.u = 9 },
+        { .name = "c", .ptr = &b, .type = REG_U8, .perm = REG_RO, .description = "x" },
+        { .name = NULL } };
+    static const RegEntry t3[] = {                /* description changed */
+        { .name = "a", .ptr = &a, .type = REG_U8, .perm = REG_RW, .min.u = 1, .max.u = 9 },
+        { .name = "b", .ptr = &b, .type = REG_U8, .perm = REG_RO, .description = "y" },
+        { .name = NULL } };
+    static const RegEntry t4[] = {                /* range changed */
+        { .name = "a", .ptr = &a, .type = REG_U8, .perm = REG_RW, .min.u = 1, .max.u = 8 },
+        { .name = "b", .ptr = &b, .type = REG_U8, .perm = REG_RO, .description = "x" },
+        { .name = NULL } };
+    RegTable x1, x2, x3, x4;
+    CHECK(reg_table_init(&x1, t1) == REG_OK && reg_table_init(&x2, t2) == REG_OK);
+    CHECK(reg_table_init(&x3, t3) == REG_OK && reg_table_init(&x4, t4) == REG_OK);
+    uint32_t s1 = reg_table_schema(&x1);
+    CHECK(s1 == reg_table_schema(&x1));           /* stable */
+    CHECK(s1 != reg_table_schema(&x2));           /* a name matters */
+    CHECK(s1 != reg_table_schema(&x3));           /* a description matters */
+    CHECK(s1 != reg_table_schema(&x4));           /* a range matters */
+    CHECK(s1 != reg_table_schema(&table));
+}
+
 static void test_arg_count(void)
 {
     /* wrong argument counts say so, they are not "unknown command"
@@ -627,6 +695,7 @@ int main(void)
     test_long_description();
     test_overflow_line();
     test_arg_count();
+    test_id();
 
     if (failures) {
         printf("\n%d of %d checks FAILED\n", failures, cases);

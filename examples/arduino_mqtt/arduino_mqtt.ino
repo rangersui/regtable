@@ -128,6 +128,8 @@ void setup()
 
     reg_table_init(&table, registry);
     regmqtt_init(&mq, &table, "uno", mqtt_publish, NULL);
+    static const RegIdentity who = { "uno", "1.0", NULL, "ATmega328P" };   /* $meta/$id carries these */
+    regmqtt_set_identity(&mq, &who);     /* REG_ERR_TABLE when the strings would not fit REGTABLE_MQTT_META_SIZE; these do */
     mqtt_connect();
 }
 

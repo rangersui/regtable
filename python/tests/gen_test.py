@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 GEN = [sys.executable, str(ROOT / "python" / "regtable"), "gen"]
 
 HEAD = "device: demo\nregisters:\n"
+BS = chr(92)
 
 
 def reg(**kw):
@@ -263,7 +264,7 @@ SVD_BAD = [
     ("svd: a directory is not an svd file", f"  - svd: {(ROOT / 'python' / 'tests').as_posix()}\n    pick: [USART1.ISR]\n", "is not a file"),
     ("svd: a description with no ASCII form is refused at the pick",
      f"  - svd: {(ROOT / 'python' / 'tests' / 'unidesc.svd').as_posix()}\n    pick: [A.S]\n",
-     "registers[0].pick[0]: A.S: description has"),
+     "registers[0].pick[0]: A.S description has"),
     ("svd: desc error names the pick location", svd_block(["{ reg: USART1.ISR, desc: Temp\u00e9rature }"]),
      "registers[0].pick[0]: 'desc' must be ASCII text"),
     ("svd: desc without a value", svd_block(["{ reg: USART1.ISR, desc: }"]), "'desc' is written without a value"),
@@ -322,9 +323,30 @@ def regx(name, off="0x0", extra=""):
     return f'<register><name>{name}</name><addressOffset>{off}</addressOffset>{extra}</register>'
 
 
+HDR_HEAD = '<?xml version="1.0"?><device>'
+HDR_TAIL = ('<addressUnitBits>8</addressUnitBits><size>32</size><access>read-write</access>'
+            '<peripherals>' + periph("A", regs=regx("R")) + '</peripherals></device>')
+
+
+def header(*parts):
+    """A device whose header is the given elements, over one register."""
+    return HDR_HEAD + "".join(parts) + HDR_TAIL
+
+
 # malformed or unsupported SVD shapes the reader must refuse, with a
 # fragment of the message; the reader is as strict as the validator
 SVD_READER_BAD = [
+    # the header: what ends up in generated C is checked like the rest
+    ("device name not an identifier", header("<name>X-1</name>"), "device name 'X-1': not a CMSIS identifier"),
+    ("device name empty", header("<name> </name>"), "device: <name> is empty"),
+    ("device name twice", header("<name>X</name><name>Y</name>"), "<name> appears 2 times"),
+    ("series with no ASCII form", header("<name>X</name><series>\u4e2d\u6587</series>"), "device series has"),
+    ("cpu with an element the schema does not define", header("<name>X</name><cpu><name>CM0</name><bogus>1</bogus></cpu>"),
+     "element <bogus> is not defined for <cpu>"),
+    ("cpu twice", header("<name>X</name><cpu><name>CM0</name></cpu><cpu><name>CM3</name></cpu>"), "<cpu> appears 2 times"),
+    ("cpu without a name", header("<name>X</name><cpu><revision>r0p0</revision></cpu>"), "device cpu: <name> is missing"),
+    ("cpu name not in the schema's list", header("<name>X</name><cpu><name>CM99</name></cpu>"), "cpu name 'CM99' is not one"),
+    ("cpu name in the wrong case", header("<name>X</name><cpu><name>cm0</name></cpu>"), "cpu name 'cm0' is not one"),
     ("not svd", '<?xml version="1.0"?><html/>', "not a CMSIS-SVD"),
     ("no peripherals", '<?xml version="1.0"?><device><name>X</name><addressUnitBits>8</addressUnitBits></device>', "no <peripherals>"),
     ("bad xml", '<?xml version="1.0"?><device><peripherals>', "no element found"),
@@ -477,6 +499,26 @@ def check_svd_reader():
         except svdmod.SvdError as e:
             if "U+4E2D" not in str(e):
                 bad.append(f"no-ASCII refusal lacks the character: {e}")
+        # the header: name, series (whitespace folded), cpu spelt out from the
+        # schema's list; "other" says nothing; a file without a header gives none
+        for parts, want in [
+            (("<name>STM32L052</name><series>STM32L0  \n  series</series><cpu><name>CM0+</name>"
+              "<revision>r0p0</revision><endian>little</endian><mpuPresent>true</mpuPresent>"
+              "<fpuPresent>false</fpuPresent><nvicPrioBits>4</nvicPrioBits>"
+              "<vendorSystickConfig>false</vendorSystickConfig></cpu>",),
+             {"name": "STM32L052", "series": "STM32L0 series", "cpu": "CM0PLUS"}),
+            (("<name>X</name><cpu><name>CM0PLUS</name></cpu>",), {"name": "X", "cpu": "CM0PLUS"}),
+            (("<name>X</name><cpu><name>ARMV81MML</name></cpu>",), {"name": "X", "cpu": "ARMV81MML"}),
+            (("<name>X</name><cpu><name>CM85</name><pmuPresent>true</pmuPresent>"
+              "<pmuNumEventCnt>8</pmuNumEventCnt></cpu>",), {"name": "X", "cpu": "CM85"}),
+            (("<name>X</name><cpu><name>other</name></cpu>",), {"name": "X", "cpu": "other"}),
+            (("<name>X</name>",), {"name": "X"}),
+        ]:
+            f = Path(d) / "hdr.svd"
+            f.write_text(header(*parts), encoding="utf-8")
+            got = svdmod.load_svd(f).chip
+            if got != want:
+                bad.append(f"header {parts[0][:40]!r}: chip {got} != {want}")
     return "; ".join(bad) if bad else None
 
 
@@ -540,6 +582,20 @@ def check_svd():
             return "application entries missing from the registry"
         if "extern" in h and "usart2_isr;" in h:
             return "registers.h declares a variable for a silicon register"
+        if '#define REGTABLE_GEN_SILICON_DEMO_CHIP "DEMOCHIP"' not in h \
+                or '#define REGTABLE_GEN_SILICON_DEMO_CPU "Cortex-M0+"' not in h:
+            return "registers.h lacks the chip macros from the SVD header"
+        # the client records where each silicon register comes from, and only those
+        py = (Path(d) / "silicon_demo_client.py").read_text(encoding="ascii")
+        sil = py[py.index("    __silicon__ = {"):]
+        sil = sil[:sil.index("    }")]
+        want_sil = {"usart2_isr": "USART2.ISR", "usart2_isr_txe": "USART2.ISR.TXE",
+                    "usart2_brr_div_mantissa": "USART2.BRR.DIV_Mantissa", "timer_count": "TIM3.CNT",
+                    "tim3_ccr3": "TIM3.CCR3", "gpioa_idr_idr5": "GPIOA.IDR.IDR5",
+                    "adc1_sr_state": "ADC1.SR.STATE", "adc1_ch_dr": "ADC1.CH.DR"}
+        got_sil = dict(re.findall(r'"(\w+)": \'([^\']+)\',', sil))
+        if got_sil != want_sil:
+            return f"__silicon__ is {got_sil}, want {want_sil}"
         if "## Silicon registers" not in md or "| `adc1_ch_dr` | demo.svd | ADC1.CH.DR | 0x40012440 |" not in md:
             return "registers.md lacks the silicon table"
         try:
@@ -587,12 +643,82 @@ def check_svd():
         # force: true takes disableCondition and alternate-view side effects knowingly
         y = Path(d) / "alt.yaml"
         y.write_text(HEAD + f"  - svd: {(ROOT / 'python' / 'tests' / 'alt.svd').as_posix()}\n"
-                     "    force: true\n    pick: [DBG.IDCODE, DBG2.IDCODE, P.SAFE, P.PLAIN, P.TINYSAFE]\n"
-                     f"  - svd: {(ROOT / 'python' / 'tests' / 'wofield.svd').as_posix()}\n"
-                     "    force: true\n    pick: [P.RW]\n", encoding="utf-8")
+                     "    force: true\n    pick: [DBG.IDCODE, DBG2.IDCODE, P.SAFE, P.PLAIN, P.TINYSAFE]\n",
+                     encoding="utf-8")
         r = subprocess.run([*GEN, str(y), "-o", d], capture_output=True, text=True)
         if r.returncode != 0:
             return f"force: true did not take the alt fixture: {r.stderr.strip()}"
+        y.write_text(HEAD + f"  - svd: {(ROOT / 'python' / 'tests' / 'wofield.svd').as_posix()}\n"
+                     "    force: true\n    pick: [P.RW]\n", encoding="utf-8")
+        r = subprocess.run([*GEN, str(y), "-o", d], capture_output=True, text=True)
+        if r.returncode != 0:
+            return f"force: true did not take the write-only-field fixture: {r.stderr.strip()}"
+        # header strings reach C through the one string-literal escaper:
+        # a series with quotes, backslashes and ?? stays a valid literal
+        esc = Path(d) / "esc.svd"
+        esc.write_text(HDR_HEAD + '<name>ESC</name><series>say "hi" ??/ tail' + BS + '</series>' + HDR_TAIL,
+                       encoding="utf-8")
+        y = Path(d) / "esc.yaml"
+        y.write_text(HEAD + f"  - svd: {esc.as_posix()}\n    pick: [A.R]\n", encoding="utf-8")
+        r = subprocess.run([*GEN, str(y), "-o", d], capture_output=True, text=True)
+        h2 = (Path(d) / "registers.h").read_text(encoding="ascii") if r.returncode == 0 else ""
+        want_line = '#define REGTABLE_GEN_DEMO_SERIES "say ' + BS + '"hi' + BS + '" ' + BS + '?' + BS + '?/ tail' + BS + BS + '"'
+        if r.returncode != 0 or want_line not in h2:
+            return f"series escaping: rc={r.returncode} {r.stderr.strip()[-200:]} {h2[-300:]!r}"
+        if cc:
+            r = subprocess.run([cc, "-std=c99", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-Wtrigraphs",
+                                "-I", str(ROOT / "src"), "-I", d, "-c",
+                                str(Path(d) / "registers.c"), "-o", str(Path(d) / "registers.o")],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                return f"escaped series does not compile: {r.stderr.strip()}"
+        # several SVDs of one chip: header facts merge field by field in
+        # either order, and a fact they disagree on is refused
+        m1 = Path(d) / "m1.svd"; m2 = Path(d) / "m2.svd"; m3 = Path(d) / "m3.svd"
+        m1.write_text(header("<name>MERGE</name><series>S1</series><cpu><name>CM3</name></cpu>"), encoding="utf-8")
+        m2.write_text(HDR_HEAD + "<name>MERGE</name><cpu><name>CM3</name></cpu><addressUnitBits>8</addressUnitBits>"
+                      "<size>32</size><access>read-write</access><peripherals>"
+                      + periph("B", base="0x40001000", regs=regx("R")) + "</peripherals></device>", encoding="utf-8")
+        m3.write_text(HDR_HEAD + "<name>MERGE</name><cpu><name>CM4</name></cpu><addressUnitBits>8</addressUnitBits>"
+                      "<size>32</size><access>read-write</access><peripherals>"
+                      + periph("B", base="0x40001000", regs=regx("R")) + "</peripherals></device>", encoding="utf-8")
+        for first, second in ((m1, m2), (m2, m1)):
+            y.write_text(HEAD + f"  - svd: {first.as_posix()}\n    pick: [{'A' if first is m1 else 'B'}.R]\n"
+                         f"  - svd: {second.as_posix()}\n    pick: [{'A' if second is m1 else 'B'}.R]\n", encoding="utf-8")
+            r = subprocess.run([*GEN, str(y), "-o", d], capture_output=True, text=True)
+            h2 = (Path(d) / "registers.h").read_text(encoding="ascii") if r.returncode == 0 else ""
+            if r.returncode != 0 or '#define REGTABLE_GEN_DEMO_SERIES "S1"' not in h2 \
+                    or '#define REGTABLE_GEN_DEMO_CPU "Cortex-M3"' not in h2:
+                return f"chip facts merge ({first.name} then {second.name}): rc={r.returncode} {r.stderr.strip()[-200:]}"
+        y.write_text(HEAD + f"  - svd: {m1.as_posix()}\n    pick: [A.R]\n"
+                     f"  - svd: {m3.as_posix()}\n    pick: [B.R]\n", encoding="utf-8")
+        r = subprocess.run([*GEN, str(y), "-o", d], capture_output=True, text=True)
+        if r.returncode != 2 or "disagree on the chip cpu: 'CM3' and 'CM4'" not in r.stderr:
+            return f"two SVDs disagreeing on the cpu: rc={r.returncode} {r.stderr.strip()[-200:]}"
+        # "other" is a stated cpu: it disagrees with CM3, and alone it gives no _CPU macro
+        m4 = Path(d) / "m4.svd"
+        m4.write_text(HDR_HEAD + "<name>MERGE</name><cpu><name>other</name></cpu><addressUnitBits>8</addressUnitBits>"
+                      "<size>32</size><access>read-write</access><peripherals>"
+                      + periph("B", base="0x40001000", regs=regx("R")) + "</peripherals></device>", encoding="utf-8")
+        for first, second, want_msg in ((m1, m4, "'CM3' and 'other'"), (m4, m1, "'other' and 'CM3'")):
+            y.write_text(HEAD + f"  - svd: {first.as_posix()}\n    pick: [{'A' if first is m1 else 'B'}.R]\n"
+                         f"  - svd: {second.as_posix()}\n    pick: [{'A' if second is m1 else 'B'}.R]\n", encoding="utf-8")
+            r = subprocess.run([*GEN, str(y), "-o", d], capture_output=True, text=True)
+            if r.returncode != 2 or f"disagree on the chip cpu: {want_msg}" not in r.stderr:
+                return f"cpu other vs CM3 ({first.name} then {second.name}): rc={r.returncode} {r.stderr.strip()[-200:]}"
+        y.write_text(HEAD + f"  - svd: {m4.as_posix()}\n    pick: [B.R]\n", encoding="utf-8")
+        r = subprocess.run([*GEN, str(y), "-o", d], capture_output=True, text=True)
+        h2 = (Path(d) / "registers.h").read_text(encoding="ascii") if r.returncode == 0 else ""
+        if r.returncode != 0 or "REGTABLE_GEN_DEMO_CPU" in h2 or '#define REGTABLE_GEN_DEMO_CHIP "MERGE"' not in h2:
+            return f"cpu other alone: rc={r.returncode} {r.stderr.strip()[-200:]}"
+        # two SVDs naming different chips in one YAML are refused
+        y.write_text(HEAD + f"  - svd: {(ROOT / 'python' / 'tests' / 'wofield.svd').as_posix()}\n"
+                     "    pick: [P.RW.R]\n"
+                     f"  - svd: {(ROOT / 'python' / 'tests' / 'alt.svd').as_posix()}\n"
+                     "    pick: [P.PLAIN]\n", encoding="utf-8")
+        r = subprocess.run([*GEN, str(y), "-o", d], capture_output=True, text=True)
+        if r.returncode != 2 or "describe different chips" not in r.stderr:
+            return f"two chips in one YAML: rc={r.returncode} {r.stderr.strip()[-200:]}"
         # the success line is printable on an ASCII-only console, non-ASCII output path included
         env = dict(os.environ, PYTHONIOENCODING="ascii")
         r = subprocess.run([*GEN, str(SVD_YAML), "-o", str(udir / "out\u00e9")],

@@ -6,12 +6,14 @@
  *   Build + run:  make run-mqtt      (or .\build mqttdemo, then .\mqttdemo)
  *
  * At start the table describes itself (regmqtt_announce:
- * demo/$meta/$table with count and fingerprint, one demo/$meta/<name>
- * per register, retained, the shape of a list --json entry), then the
- * full state goes out. Every loop turn the fake temperature drifts,
- * then regmqtt_poll publishes whatever moved:
+ * demo/$meta/$table with count and fingerprint, demo/$meta/$id with
+ * who the device is, one demo/$meta/<name> per register, retained,
+ * the shape of a list --json entry), then the full state goes out.
+ * Every loop turn the fake temperature drifts, then regmqtt_poll
+ * publishes whatever moved:
  *
  *   PUB [r] demo/$meta/$table {"count":4,"schema":"..."}
+ *   PUB [r] demo/$meta/$id {"device":"demo","fw":"1.0","built":"...","regtable":"...","regs":4,"schema":"..."}
  *   PUB [r] demo/$meta/temp {"name":"temp","type":"FLOAT",...}
  *   PUB [r] demo/temp 23.7
  *
@@ -74,6 +76,11 @@ int main(void)
     static RegMqtt  mq;
     reg_table_init(&table, registry);
     regmqtt_init(&mq, &table, "demo", print_publish, NULL);
+    static const RegIdentity who = { .device = "demo", .fw = "1.0" };   /* $meta/$id carries these */
+    if (regmqtt_set_identity(&mq, &who) != REG_OK) {   /* refused when it would not fit REGTABLE_MQTT_META_SIZE */
+        fprintf(stderr, "identity does not fit the $meta scratch\n");
+        return 1;
+    }
 
     printf("regtable MQTT demo. Publishes appear as PUB lines;\n");
     printf("type '<topic> <payload>' to inject a message, 'quit' to exit.\n");
