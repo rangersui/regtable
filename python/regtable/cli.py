@@ -95,7 +95,8 @@ def cmd_watch(args):
                                   "value": value}), flush=True)
             else:
                 stamp = time.strftime("%H:%M:%S")
-                print(f"{stamp} {name:<16} {value}", flush=True)
+                shown = f"{value:.9g}" if isinstance(value, float) else value   # as the device prints it
+                print(f"{stamp} {name:<16} {shown}", flush=True)
     except KeyboardInterrupt:
         pass
     finally:

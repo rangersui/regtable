@@ -573,14 +573,15 @@ class RegtableClient:
         returns rows of (seconds, {name: value}), the time kept apart
         from the values so no register name can stand in its place."""
         names = names or tuple(self.__schema__)
-        rows, t0 = [], time.monotonic()
+        rows, t0, k = [], time.monotonic(), 0
         while True:
             t = time.monotonic() - t0
             snap = self.snapshot()
             rows.append((round(t, 3), {n: snap.get(n) for n in names}))
-            if t + every > duration:
+            k += 1                          # sample k is due at k * every; the clock
+            if every <= 0 or k * every > duration:   # does not decide how many there are
                 return rows
-            time.sleep(every)
+            time.sleep(max(0.0, t0 + k * every - time.monotonic()))
 
     def close(self):
         """Close for good: the transport is released and every later

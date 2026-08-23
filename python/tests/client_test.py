@@ -115,6 +115,8 @@ def main():
         rows = dev.record("interval", "led", duration=0, every=0)
         check(len(rows) == 1 and isinstance(rows[0], tuple) and rows[0][0] == 0.0
               and rows[0][1]["interval"] == 500, f"record() rows are (t, values): {rows}")
+        rows = dev.record("interval", duration=0.05, every=0.02)   # samples at 0, 0.02, 0.04
+        check(len(rows) == 3, f"record() takes one sample per period, {len(rows)} rows for 0.05 s at 0.02")
         dev.gain = 2.5000000001          # rounds to binary32 2.5: inside
         check(dev.gain == 2.5, "float bound compared in binary32")
 
