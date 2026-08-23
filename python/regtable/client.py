@@ -225,10 +225,12 @@ MODBUS_ADDR_MAX = 0xFFFF                 # word addresses are 16-bit; 0 = unmapp
 def in_domain(value, t):
     """Is value a Python value of register type t that the register can
     hold: a bool; a non-bool int inside the type's range; for FLOAT,
-    zero or a normal binary32 magnitude (the generator's rule for
-    YAML constants: nothing that underflows to zero or overflows).
-    Integers of any size compare without float conversion, so a
-    400-digit int is refused, not raised on."""
+    a finite number a binary32 can hold, subnormals included (a device
+    computes them), and nothing a binary32 cannot: beyond FLT_MAX, or
+    nonzero yet rounding to zero. Integers of any size compare without
+    float conversion, so a 400-digit int is refused, not raised on.
+    (YAML constants have the stricter rule of the generator: a C
+    literal must spell them.)"""
     if t == "BOOL":
         return isinstance(value, bool)
     if t == "FLOAT":
@@ -236,7 +238,9 @@ def in_domain(value, t):
             return False
         if isinstance(value, float) and not math.isfinite(value):
             return False
-        return value == 0 or FLT_MIN <= abs(value) <= FLT_MAX
+        if abs(value) > FLT_MAX:
+            return False
+        return value == 0 or f32(value) != 0
     return _is_int(value) and DOMAIN[t][0] <= value <= DOMAIN[t][1]
 
 
@@ -255,21 +259,25 @@ def check_value(name, entry, value):
     if t == "FLOAT":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise TypeError(f"{name} expects float, got {type(value).__name__}")
-        try:
-            value = float(value)
+        try:                               # the base type's own value, not a subclass's story
+            value = float(int.__index__(value)) if isinstance(value, int) else float.__float__(value)
         except OverflowError:
             raise ValueError(f"{name}: value too large for a float")
         if not math.isfinite(value):
             raise ValueError(f"{name}: {value!r} is not a finite number")
         try:
-            value = f32(value)
+            rounded = f32(value)
         except ValueError:
             raise ValueError(f"{name}: {value!r} does not fit a float register")
+        if value != 0 and rounded == 0:
+            raise ValueError(f"{name}: {value!r} underflows a float register to zero")
+        value = rounded
         if lo is not None and not (f32(lo) <= value <= f32(hi)):
             raise ValueError(f"{name}: {value} outside {f32(lo)!r}..{f32(hi)!r}")
         return value
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{name} expects int, got {type(value).__name__}")
+    value = int.__index__(value)           # the base type's own value, not a subclass's story
     what = ""
     if lo is None:
         lo, hi = DOMAIN[t]
@@ -379,25 +387,18 @@ class RegtableClient:
         if "value" not in obj:
             self._fail(f"answer to {cmd!r} has no value: {obj!r}")
         v = obj["value"]
-        if pytype is bool:
-            ok = isinstance(v, bool)
-        elif pytype is int:
-            ok = isinstance(v, int) and not isinstance(v, bool)
-        else:
-            ok = isinstance(v, (int, float)) and not isinstance(v, bool)
-            if ok:
-                v = float(v)           # "1" on the wire is still a float register
-        if not ok:
-            self._fail(f"{name}: value {v!r} is not a {pytype.__name__}")
-        return v
+        t = self.__schema__[name]["type"]
+        if not in_domain(v, t):
+            self._fail(f"{name}: value {v!r} does not fit a {t}")
+        return f32(v) if t == "FLOAT" else v     # the binary32 the device holds
 
     def _set(self, name, value):
         if isinstance(value, bool):
             text = "true" if value else "false"
         elif isinstance(value, float):
-            text = repr(value)         # shortest round-trip; the device re-rounds to binary32
+            text = repr(float.__float__(value))   # shortest round-trip; the device re-rounds to binary32
         else:
-            text = str(value)
+            text = str(int.__index__(value))      # the number itself; no subclass method is consulted
         cmd = f"set {name} {text} --json"
         obj = self._expect_dict(self._cmd_json(cmd), cmd)
         if "error" in obj:
@@ -428,6 +429,8 @@ class RegtableClient:
                 self._fail(f"{e['name']}: unknown perm {e['perm']!r}")
             if "value" not in e or not in_domain(e["value"], e["type"]):
                 self._fail(f"{e['name']}: value {e.get('value')!r} does not fit a {e['type']}")
+            if e["type"] == "FLOAT":
+                e["value"] = f32(e["value"])     # the binary32 the device holds
         return table
 
     def verify(self):
@@ -520,6 +523,8 @@ class RegtableClient:
             desc = e.get("desc", "")
             if not isinstance(desc, str):
                 probe._fail(f"{n}: desc {desc!r} is not text")
+            if t == "FLOAT" and mn is not None:
+                mn, mx = f32(mn), f32(mx)        # bounds are binary32 on the device too
             schema[n] = {"type": t, "perm": e["perm"], "min": mn, "max": mx,
                          "modbus": mb, "desc": desc}
         sub = type("DiscoveredDevice", (RegtableClient,),
@@ -565,13 +570,14 @@ class RegtableClient:
 
     def record(self, *names, duration, every=1.0):
         """Sample names every `every` seconds for `duration` seconds;
-        returns rows of {"t": seconds, name: value, ...}."""
+        returns rows of (seconds, {name: value}), the time kept apart
+        from the values so no register name can stand in its place."""
         names = names or tuple(self.__schema__)
         rows, t0 = [], time.monotonic()
         while True:
             t = time.monotonic() - t0
             snap = self.snapshot()
-            rows.append({"t": round(t, 3), **{n: snap.get(n) for n in names}})
+            rows.append((round(t, 3), {n: snap.get(n) for n in names}))
             if t + every > duration:
                 return rows
             time.sleep(every)

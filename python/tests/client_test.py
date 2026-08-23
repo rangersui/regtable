@@ -58,6 +58,14 @@ def main():
     sys.path.insert(0, str(Path(gen_dir).resolve()))
     import demo_client  # noqa: E402  (generated)
     Dev = demo_client.DemoDevice
+    # the generated client runs on the runtime copy beside it, and its
+    # exceptions are that module's; the package's own classes are for
+    # the discover() / build_client() paths below
+    rt = sys.modules[Dev.__mro__[1].__module__]
+    check(Path(rt.__file__).resolve().parent == Path(gen_dir).resolve(),
+          f"the generated client runs on the sibling runtime copy: {rt.__file__}")
+    RemoteError, SchemaDriftError, TransportError = rt.RemoteError, rt.SchemaDriftError, rt.TransportError  # noqa: N806
+    from regtable import client as rc
 
     # -- positive: generated client vs generated table -------------- #
     with Dev(PipeTransport([cli_bin])) as dev:
@@ -102,6 +110,11 @@ def main():
                       lambda: setattr(dev, "gain", float("nan")))
         expect_raises(ValueError, "float inf refused locally",
                       lambda: setattr(dev, "gain", float("inf")))
+        expect_raises(ValueError, "a nonzero that underflows binary32 to zero is refused",
+                      lambda: setattr(dev, "gain", 1e-50))
+        rows = dev.record("interval", "led", duration=0, every=0)
+        check(len(rows) == 1 and isinstance(rows[0], tuple) and rows[0][0] == 0.0
+              and rows[0][1]["interval"] == 500, f"record() rows are (t, values): {rows}")
         dev.gain = 2.5000000001          # rounds to binary32 2.5: inside
         check(dev.gain == 2.5, "float bound compared in binary32")
 
@@ -249,13 +262,71 @@ def main():
         expect_raises(SchemaDriftError, "non-numeric float bound is drift, not a crash",
                       lambda: Dev(ScriptedTransport([floaty]), timeout=0.2))
 
+    # a single get is held to the declared domain, like the list is
+    t = ScriptedTransport([table_json, '{"value":300}'])
+    t.closed = False
+    t.close = lambda: setattr(t, "closed", True)
+    dev = Dev(t, timeout=0.2)
+    expect_raises(TransportError, "get: a U8 value outside its domain closes", lambda: dev.small)
+    check(t.closed, "get: domain failure closes the connection")
+    t = ScriptedTransport([table_json, '{"value":1}'])
+    g = Dev(t, timeout=0.2).gain
+    check(g == 1.0 and isinstance(g, float), "get: a float register's 1 arrives as 1.0")
+    t = ScriptedTransport([table_json, '{"value":1e-45}'])
+    check(Dev(t, timeout=0.2).gain == rt.f32(1e-45), "get: a binary32 subnormal arrives as binary32")
+    t = ScriptedTransport([table_json, '{"value":2.5000000001}'])
+    check(Dev(t, timeout=0.2).gain == 2.5, "get: a float arrives rounded to binary32")
+    near = table_json.replace('"type":"FLOAT","perm":"RO","value":0.0',
+                              '"type":"FLOAT","perm":"RO","value":2.5000000001', 1)
+    check(Dev(ScriptedTransport([table_json, near]), timeout=0.2).snapshot()["temp"] == 2.5,
+          "snapshot: floats are binary32")
+    # the table's floats arrive as float, and a subnormal in the table is a value
+    floaty1 = table_json.replace('"type":"FLOAT","perm":"RO","value":0.0',
+                                 '"type":"FLOAT","perm":"RO","value":1', 1)
+    snap = Dev(ScriptedTransport([table_json, floaty1]), timeout=0.2).snapshot()
+    check(snap["temp"] == 1.0 and isinstance(snap["temp"], float), "snapshot: FLOAT 1 is 1.0")
+    sub = table_json.replace('"type":"FLOAT","perm":"RO","value":0.0',
+                             '"type":"FLOAT","perm":"RO","value":1e-45', 1)
+    Dev(ScriptedTransport([sub]), timeout=0.2)
+    check(True, "list: a binary32 subnormal is accepted")
+    # the wire text is the number, not a subclass's __str__
+    class Weird(int):
+        def __str__(self):
+            return "9999"
+    t = ScriptedTransport([table_json, '{"result":"OK"}'])
+    dev = Dev(t, timeout=0.2)
+    dev.interval = Weird(500)
+    check(t.sent[-1] == "set interval 500 --json", f"int subclass is sent canonically: {t.sent[-1]}")
+    class Sly(int):                     # passes the range as 500, answers 99999 when asked
+        def __int__(self):
+            return 99999
+        def __index__(self):
+            return 99999
+        def __str__(self):
+            return "99999"
+    t = ScriptedTransport([table_json, '{"result":"OK"}'])
+    dev = Dev(t, timeout=0.2)
+    dev.interval = Sly(500)
+    check(t.sent[-1] == "set interval 500 --json", f"int subclass overriding __index__: {t.sent[-1]}")
+    with rc.RegtableClient.discover(ScriptedTransport([table_json, '{"result":"OK"}']), timeout=0.2) as d2:
+        d2._t.sent.clear()
+        d2["interval"] = Sly(500)
+        check(d2._t.sent[-1] == "set interval 500 --json", f"discover: int subclass canonical: {d2._t.sent[-1]}")
+    class Wide(float):
+        def __float__(self):
+            return 9.0
+    t = ScriptedTransport([table_json, '{"result":"OK"}'])
+    dev = Dev(t, timeout=0.2)
+    dev.gain = Wide(1.5)
+    check(t.sent[-1] == "set gain 1.5 --json", f"float subclass overriding __float__: {t.sent[-1]}")
+
     # the list itself is a protocol boundary: shape, type, perm, value
     from regtable.client import RegtableClient as _RC
     def closes_on(script, label):
         tt = ScriptedTransport(script)
         tt.closed = False
         tt.close = lambda: setattr(tt, "closed", True)
-        expect_raises(TransportError, label, lambda: _RC.discover(tt, timeout=0.2))
+        expect_raises(rc.TransportError, label, lambda: _RC.discover(tt, timeout=0.2))
         check(tt.closed, f"{label}: connection closed")
     closes_on([table_json.replace('"min":100,"max":60000', '"min":"oops","max":60000')],
               "discover: string bound on an int register")
@@ -350,7 +421,7 @@ def main():
                       lambda: setattr(dev2, "gain", 1e39))
 
     # a pipe command that cannot start is a TransportError, not a traceback
-    expect_raises(TransportError, "missing pipe command is a TransportError",
+    expect_raises(rc.TransportError, "missing pipe command is a TransportError",
                   lambda: PipeTransport(["./no-such-binary-regtable"]))
 
     # build_client() refuses bad input with an exception the host can catch

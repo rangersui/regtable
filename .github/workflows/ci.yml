@@ -70,6 +70,13 @@ jobs:
               -Isrc -c src/regtable_core.c src/regtable_cli.c src/regtable_modbus.c src/regtable_mqtt.c
             arm-none-eabi-size regtable_core.o regtable_cli.o regtable_modbus.o regtable_mqtt.o
           done
+      # a table with silicon registers picked from an SVD, on the target toolchain
+      - run: pip install pyyaml
+      - run: |
+          python python/regtable gen python/tests/svd_demo.yaml -o gen_svd
+          arm-none-eabi-gcc -std=c99 -Wall -Wextra -Wpedantic -Werror -Os \
+            -mcpu=cortex-m0plus -mthumb -Isrc -Igen_svd -c gen_svd/registers.c -o gen_svd/registers.o
+          arm-none-eabi-size gen_svd/registers.o
 
   # the Arduino example, built the way the IDE builds it: repo as a
   # library (src/ + library.properties), sketch is C++, core is avr-gcc
@@ -118,6 +125,8 @@ jobs:
           regtable --version
           regtable gen "$GITHUB_WORKSPACE/tools/example.yaml" -o pkgout
           test -f pkgout/demo_client.py && test -f pkgout/regtable_client.py
+          regtable gen "$GITHUB_WORKSPACE/python/tests/svd_demo.yaml" -o pkgsvd
+          grep -q "volatile void \*)0x4000441CU" pkgsvd/registers.c
           regtable watch --yaml "$GITHUB_WORKSPACE/tools/example.yaml" --every 0 --count 1 --pipe "$GITHUB_WORKSPACE/gen/cli"
           regtable watch temp led --every 0 --count 1 --pipe "$GITHUB_WORKSPACE/gen/cli"
           python -c "import regtable.panel as p; print(p.panel_path())"

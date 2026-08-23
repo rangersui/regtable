@@ -5,7 +5,7 @@
 #   make test     build and run the regression test
 #   make run-tcp  build and start the desktop Modbus TCP slave example
 #   make run-mqtt build and start the desktop MQTT demo (stdout broker)
-#   make codegen  generate a table from tools/example.yaml and test it
+#   make codegen  generate tables from tools/example.yaml and the SVD fixture, test them
 #                 (python with PyYAML; runs the package from python/, no install)
 #   make strict   rebuild everything with -Werror and run the test
 #   make fuzz     libFuzzer + ASan/UBSan on the CLI byte path (needs clang)
@@ -100,6 +100,8 @@ RT = $(PY) python/regtable
 codegen: $(EXAMPLE)
 	$(PY) python/tests/gen_test.py
 	$(RT) gen tools/example.yaml -o gen
+	$(RT) gen python/tests/svd_demo.yaml -o gen_svd
+	$(CC) $(CFLAGS) -Werror -Igen_svd -c gen_svd/registers.c -o gen_svd/registers.o
 	$(CC) $(CFLAGS) -Werror -Igen -o gen/smoke$(EXE) \
 	    tools/gen_smoke.c gen/registers.c $(LIB_SRC) $(LIBM)
 	./gen/smoke$(EXE)
@@ -140,4 +142,4 @@ fuzz-mb: regtable_modbus_fuzz.c $(LIB_SRC) $(LIB_HDR)
 
 clean:
 	-$(RM) $(EXAMPLE) $(TEST) $(MBTEST) $(MQTEST) $(TCPSLAVE) $(MQTTDEMO) $(FUZZ) $(FUZZMB) fuzz.lib fuzz.exp fuzz.pdb fuzz_mb.lib fuzz_mb.exp fuzz_mb.pdb
-	-$(RM) -r corpus corpus_mb gen crash-* leak-* timeout-*
+	-$(RM) -r corpus corpus_mb gen gen_svd crash-* leak-* timeout-*

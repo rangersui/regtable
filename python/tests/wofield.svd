@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- a write-only register with a readable field (a read of the field is a read of
+     the whole register: refused), and a readable register with a write-only field -->
+<device schemaVersion="1.3"><name>WOF</name><addressUnitBits>8</addressUnitBits><size>32</size><access>read-write</access>
+  <peripherals><peripheral><name>P</name><baseAddress>0x40000000</baseAddress><registers>
+    <register><name>WO</name><addressOffset>0x0</addressOffset><access>write-only</access>
+      <fields><field><name>F</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth><access>read-only</access></field></fields>
+    </register>
+    <register><name>RW</name><addressOffset>0x4</addressOffset>
+      <fields><field><name>W</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth><access>write-only</access></field>
+              <field><name>R</name><bitOffset>8</bitOffset><bitWidth>8</bitWidth></field></fields>
+    </register>
+  </registers></peripheral></peripherals></device>

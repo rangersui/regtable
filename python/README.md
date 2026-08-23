@@ -11,7 +11,7 @@ pip install regtable
 ## Command line
 
 ```
-regtable gen device.yaml -o gen            # registers.c/.h/.md + <device>_client.py
+regtable gen device.yaml -o gen            # registers.c/.h/.md + <device>_client.py; `svd:` blocks pick silicon registers
 regtable connect -p COM6                   # the board's own table, then a REPL with `dev`
 regtable watch a0 led -p COM6              # print changes; --json for scripts
 regtable connect -p COM6 --yaml device.yaml  # typed client, verified against the board first

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- alternate views of one address and a peripheral with a disableCondition:
+     a pick of the harmless name still reads the address the destructive one describes -->
+<device schemaVersion="1.3"><name>ALT</name><addressUnitBits>8</addressUnitBits><size>32</size><access>read-write</access>
+  <peripherals>
+    <peripheral><name>P</name><baseAddress>0x40001000</baseAddress><registers>
+      <register><name>SAFE</name><addressOffset>0x0</addressOffset></register>
+      <register><name>DESTRUCTIVE</name><addressOffset>0x0</addressOffset><alternateRegister>SAFE</alternateRegister><readAction>clear</readAction></register>
+      <register><name>PLAIN</name><addressOffset>0x10</addressOffset></register>
+      <register><name>TINYSAFE</name><addressOffset>0x20</addressOffset></register>
+      <register><name>TINYBIT</name><addressOffset>0x20</addressOffset><size>1</size><alternateRegister>TINYSAFE</alternateRegister><readAction>clear</readAction></register>
+    </registers></peripheral>
+    <peripheral><name>Q</name><baseAddress>0x40001000</baseAddress><alternatePeripheral>P</alternatePeripheral><registers>
+      <register><name>EATS</name><addressOffset>0x10</addressOffset><readAction>modify</readAction></register>
+    </registers></peripheral>
+    <peripheral><name>DBG</name><baseAddress>0x40015800</baseAddress><disableCondition>0 == (DBGMCU-&gt;CR &amp; 1)</disableCondition><registers>
+      <register><name>IDCODE</name><addressOffset>0x0</addressOffset><access>read-only</access></register>
+    </registers></peripheral>
+    <peripheral derivedFrom="DBG"><name>DBG2</name><baseAddress>0x40015C00</baseAddress></peripheral>
+  </peripherals></device>

@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A small synthetic CMSIS-SVD for the regtable gen tests. The shapes
+     a vendor file uses: device defaults, derivedFrom peripherals, a dim
+     array of registers, a cluster, fields by bitOffset/bitWidth and by
+     bitRange, a read-to-clear register (readAction), a write-only
+     register, a misaligned register, 16- and 8-bit registers. -->
+<device schemaVersion="1.3">
+  <name>DEMOCHIP</name>
+  <version>1.0</version>
+  <description>Synthetic test device</description>
+  <addressUnitBits>8</addressUnitBits>
+  <size>32</size>
+  <access>read-write</access>
+  <peripherals>
+    <peripheral>
+      <name>USART1</name>
+      <description>Universal synchronous asynchronous receiver transmitter</description>
+      <baseAddress>0x40013800</baseAddress>
+      <registers>
+        <register>
+          <name>ISR</name>
+          <description>Interrupt &amp; status register</description>
+          <addressOffset>0x1C</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field><name>PE</name><description>Parity error</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>RXNE</name><description>Read data register not empty</description><bitOffset>5</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>TXE</name><description>Transmit data register empty</description><bitOffset>7</bitOffset><bitWidth>1</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>RDR</name>
+          <description>Receive data register</description>
+          <addressOffset>0x24</addressOffset>
+          <access>read-only</access>
+          <readAction>modify</readAction>
+          <fields>
+            <field><name>RDR</name><description>Receive data value</description><bitRange>[8:0]</bitRange></field>
+          </fields>
+        </register>
+        <register>
+          <name>TDR</name>
+          <description>Transmit data register</description>
+          <addressOffset>0x28</addressOffset>
+          <access>write-only</access>
+        </register>
+        <register>
+          <name>BRR</name>
+          <description>Baud rate register</description>
+          <addressOffset>0x0C</addressOffset>
+          <size>16</size>
+          <fields>
+            <field><name>DIV_Fraction</name><bitOffset>0</bitOffset><bitWidth>4</bitWidth></field>
+            <field><name>DIV_Mantissa</name><bitOffset>4</bitOffset><bitWidth>12</bitWidth></field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral derivedFrom="USART1">
+      <name>USART2</name>
+      <baseAddress>0x40004400</baseAddress>
+    </peripheral>
+    <peripheral>
+      <name>GPIOA</name>
+      <description>General purpose I/O</description>
+      <baseAddress>0x40010800</baseAddress>
+      <registers>
+        <register>
+          <name>IDR</name>
+          <description>Input data register</description>
+          <addressOffset>0x08</addressOffset>
+          <access>read-only</access>
+          <fields>
+            <field><name>IDR%s</name><description>Port input data</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth><dim>16</dim><dimIncrement>1</dimIncrement><dimIndex>0-15</dimIndex></field>
+          </fields>
+        </register>
+        <register>
+          <name>ODD</name>
+          <description>A register the vendor placed off its alignment</description>
+          <addressOffset>0x0E</addressOffset>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>SPI1</name>
+      <description>Serial peripheral interface</description>
+      <baseAddress>0x40013000</baseAddress>
+      <registers>
+        <register>
+          <name>DR</name>
+          <description>Data register; reading the data field pops the FIFO</description>
+          <addressOffset>0x0C</addressOffset>
+          <fields>
+            <field><name>DATA</name><description>Data</description><bitOffset>0</bitOffset><bitWidth>16</bitWidth><readAction>clear</readAction></field>
+            <field><name>FLAG</name><description>A flag next to it</description><bitOffset>31</bitOffset><bitWidth>1</bitWidth></field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>TIM3</name>
+      <description>General purpose timer</description>
+      <baseAddress>0x40000400</baseAddress>
+      <registers>
+        <register>
+          <name>CNT</name>
+          <description>Counter</description>
+          <addressOffset>0x24</addressOffset>
+          <size>16</size>
+        </register>
+        <register>
+          <name>CCR%s</name>
+          <description>Capture/compare register</description>
+          <addressOffset>0x34</addressOffset>
+          <dim>4</dim>
+          <dimIncrement>4</dimIncrement>
+          <dimIndex>1-4</dimIndex>
+        </register>
+      </registers>
+    </peripheral>
+    <peripheral>
+      <name>ADC1</name>
+      <description>Analog to digital converter</description>
+      <baseAddress>0x40012400</baseAddress>
+      <registers>
+        <register>
+          <name>SR</name>
+          <description>Status register</description>
+          <addressOffset>0x00</addressOffset>
+          <size>8</size>
+          <fields>
+            <field><name>EOC</name><description>End of conversion</description><bitOffset>1</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>STATE</name><description>Converter state</description><bitOffset>4</bitOffset><bitWidth>3</bitWidth></field>
+          </fields>
+        </register>
+        <cluster>
+          <name>CH</name>
+          <description>Per-channel block</description>
+          <addressOffset>0x40</addressOffset>
+          <register>
+            <name>DR</name>
+            <description>Channel data</description>
+            <addressOffset>0x00</addressOffset>
+            <access>read-only</access>
+          </register>
+          <register>
+            <name>CFG</name>
+            <description>Channel configuration</description>
+            <addressOffset>0x04</addressOffset>
+          </register>
+        </cluster>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

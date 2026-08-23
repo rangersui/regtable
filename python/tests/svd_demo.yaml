@@ -1,0 +1,27 @@
+# Application registers next to silicon registers picked from a
+# CMSIS-SVD (python/tests/demo.svd, a synthetic device). The generated
+# table compiles for any target; the silicon entries only mean
+# something on the chip the SVD describes.
+device: silicon_demo
+registers:
+  - name: temp
+    type: float
+    perm: ro
+    init: 23.4
+    desc: Water temperature
+
+  - name: led
+    type: bool
+    perm: rw
+    desc: Status LED
+
+  - svd: demo.svd
+    pick:
+      - USART2.ISR                          # whole register, U32
+      - USART2.ISR.TXE                      # one bit, BOOL
+      - USART2.BRR.DIV_Mantissa             # 12 bits, U16
+      - { reg: TIM3.CNT, as: timer_count, desc: "Motor timer, counts up" }
+      - TIM3.CCR3                           # from a dim array
+      - GPIOA.IDR.IDR5                      # from a field dim array
+      - ADC1.SR.STATE                       # 3 bits of an 8-bit register
+      - ADC1.CH.DR                          # inside a cluster

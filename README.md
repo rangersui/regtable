@@ -9,7 +9,7 @@ A table of named registers (C variables plus selected hardware peripherals) is e
 - **Serial CLI** `get temp`, `set led true`, `info interval`, `list`; `--json` on every command makes the same CLI the machine interface: discovery, typed calls, structured errors
 - **Modbus RTU / TCP** any SCADA / HMI / PLC master can read/write
 - **MQTT** publish state, subscribe to commands; the table describes itself on retained metadata topics
-- **YAML codegen** one description generates the C table, its documentation, and a typed Python client that verifies itself against the device
+- **YAML codegen** one description generates the C table, its documentation, and a typed Python client that verifies itself against the device; silicon registers picked from the vendor's SVD join the table read-only
 - **Web panel** browser connects via Web Serial: live table, sliders, toggles, console
 - **Python** `pip install regtable`: the generator, a client that takes the device's own table or a typed one from YAML, `regtable connect / watch / serve`; a Stream Deck example makes it a physical panel
 
@@ -313,6 +313,27 @@ registers:
 ```
 
 Every constraint the adapters enforce at init time is checked at generation time instead: duplicate names, Modbus word overlaps and widths, MQTT topic rules on names, ranges against the type's domain, hooks on registers that could never run them. A bad table fails before it compiles. `make codegen` generates from [tools/example.yaml](tools/example.yaml), compiles the output with `-Werror`, runs a smoke test against it, and drives the Python client and command against a CLI built over the generated table. The package lives in [python/](python/) with its own [README](python/README.md); `pip install .` from the checkout installs the same thing PyPI ships.
+
+### Silicon registers from the SVD
+
+The chip vendor's CMSIS-SVD file describes the silicon the way the YAML describes the application: every peripheral register, its address, size, access, and bit fields. A YAML can pick a few of those and the generator exposes them as read-only entries next to the application's own, so a serial `list` shows silicon state with no debugger attached and no HAL call written:
+
+```yaml
+registers:
+  - name: temp
+    type: float
+    perm: ro
+
+  - svd: STM32L053.svd                 # the vendor's file, relative to this YAML
+    pick:
+      - USART2.ISR                     # usart2_isr, U32: the whole register
+      - USART2.ISR.TXE                 # usart2_isr_txe, BOOL: one field
+      - { reg: TIM2.CNT, as: motor_count, desc: Motor timer }
+```
+
+A whole register becomes an entry whose `ptr` is the register's address, read in place; a field becomes an entry with a generated `on_read` that samples the register and keeps the bits (BOOL for one bit, the narrowest integer type otherwise). Names follow the pick (`USART2.ISR` becomes `usart2_isr`), go through every rule a hand-written name does, and `as:` renames. The description carries the register path, the address, and the field map with bit positions, so `info` shows where a value comes from and what its bits mean (a `desc:` on the pick replaces it); `registers.md` adds a table of the picks with their addresses, whatever the description says. A whole register with many fields gets a long description: the CLI streams it whole, the MQTT `$meta` leaves it out when it does not fit `REGTABLE_MQTT_META_SIZE` (the rest of the meta still goes).
+
+The SVD is used as written: the address of every picked register is the vendor's, and a wrong SVD gives a wrong address the same way a wrong `modbus_addr` gives a wrong map; the vendor's file is the place to fix it. A pick reads one address, as an unsigned value of the register's width; what the generator checks is what the SVD says about reading that address: the pick names one register or field, 8, 16, or 32 bits wide and aligned to its size; the register is readable (its access declared at some level and not write-only, with no write-only field in the bytes read); no `readAction` on the register, on any of its fields, or on any other register the SVD places at the same address (an alternate view), since every emitted read is a whole-register read and a field that clears itself when read, a data register's payload, would be consumed by showing it; no `disableCondition` on the peripheral, whose expression the generator cannot evaluate. `force: true` on the block takes the last two knowingly. The check sees only what the vendor marked: the STM32L0 files, for one, mark no `readAction` at all, so their receive data registers (`USART2.RDR`, `SPI1.DR`) pass the check and would be drained by every poll; picking a data register is a decision, not an accident. Silicon entries are read-only: a write to the silicon belongs to the HAL and the application. The peripheral's clock is the application's: reading an unclocked peripheral faults on many parts, so the picks are registers of peripherals the application runs. The generated table compiles with the host compilers in CI (GCC and Clang on Linux, macOS, Windows) and with `arm-none-eabi-gcc` for Cortex-M0+; what it reads is verified by running it on the chip the SVD describes. The reader is the generator's own (`python/regtable/svd.py`), and it stops at what a read needs: peripherals with `derivedFrom` (one level) and `dim` arrays, clusters, registers and fields with `dim`, `bitOffset`/`bitWidth`, `bitRange`, `lsb`/`msb`, access, `readAction`, `disableCondition`; elements are checked against the schema's list for each level, so a misspelt `<size>` is refused instead of inherited; a device whose `addressUnitBits` is not 8 is refused; `alternateGroup`, `alternateCluster`, `protection`, `dataType`, `resetValue`, `enumeratedValues`, `writeConstraint`, `modifiedWriteValues`, and the device `width` are accepted as schema elements and left alone (a pick reads an unsigned value, whatever `dataType` says); vendor descriptions are rendered to ASCII by a fixed table (`\u00b5A` to `uA`, `\u00b1` to `+/-`, accents decomposed) and a character with no ASCII form refuses the pick by name, for a `desc:` of its own to replace it; every malformed or unsupported shape is refused with its location; no dependency beyond the standard library.
 
 ## Atomicity
 

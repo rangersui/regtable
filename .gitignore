@@ -35,3 +35,4 @@ __pycache__/
 dist/
 *.egg-info/
 build/
+gen_svd/
