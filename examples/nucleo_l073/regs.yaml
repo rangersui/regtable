@@ -1,0 +1,33 @@
+# A NUCLEO-L073RZ as a register table: the LED, the button, the
+# uptime, and silicon registers picked from the vendor's CMSIS-SVD,
+# read in place. Regenerating (regtable gen) needs STM32L0x3.svd
+# beside this file; the generated table in gen/ is checked in, so
+# building the example does not.
+device: nucleo
+registers:
+  - name: led
+    type: bool
+    perm: rw
+    desc: Green LED LD2 (PA5)
+    hooks:
+      on_change: led_changed
+
+  - name: button
+    type: bool
+    perm: ro
+    desc: User button B1 (PC13, pressed reads true)
+    hooks:
+      on_read: button_read
+
+  - name: uptime
+    type: u32
+    perm: ro
+    desc: Milliseconds since reset
+    hooks:
+      on_read: uptime_read
+
+  - svd: STM32L0x3.svd
+    pick:
+      - { reg: GPIOA.IDR.ID5, as: led_pin }
+      - { reg: GPIOC.IDR.ID13, as: button_pin }
+      - DBGMCU.IDCODE

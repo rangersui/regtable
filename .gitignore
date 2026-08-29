@@ -36,3 +36,8 @@ dist/
 *.egg-info/
 build/
 gen_svd/
+examples/nucleo_l073/MDK-ARM/Out/
+examples/nucleo_l073/MDK-ARM/*.uvoptx
+examples/nucleo_l073/MDK-ARM/*.uvguix.*
+examples/nucleo_l073/MDK-ARM/RTE/
+!examples/nucleo_l073/gen/
